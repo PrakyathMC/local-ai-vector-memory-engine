@@ -1,1 +1,8 @@
 ruvector/
+ruvector/
+docs/
+target/
+**/__pycache__/
+.venv/
+*.pyd
+*.so

@@ -1,8 +1,8 @@
 # Local AI Vector Memory Engine
 
-> A Rust-native foundation for persistent AI memory, semantic retrieval, graph context, and observable local decisions.
+> A polyglot AI memory platform with a Rust retrieval core and Python-first application workflows.
 
-**Local AI Vector Memory Engine** is a learning-focused AI systems project inspired by the ideas explored in RuVector. It is being designed as a smaller, understandable, and testable platform for building AI applications and agents that can remember information across sessions.
+**Local AI Vector Memory Engine** is a learning-focused AI systems project inspired by the ideas explored in RuVector. It combines a Rust-native memory and retrieval core with Python embeddings, RAG orchestration, model integration, and evaluation workflows.
 
 The project is currently in the **research and architecture phase**. The capabilities described below are the target design, not claims that every feature has already been implemented.
 
