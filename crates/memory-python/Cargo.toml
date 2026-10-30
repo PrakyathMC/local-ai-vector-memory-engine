@@ -11,4 +11,5 @@ crate-type = ["cdylib"]
 
 [dependencies]
 memory-core = { path = "../memory-core" }
+memory-store = { path = "../memory-store" }
 pyo3 = { version = "0.27", features = ["extension-module"] }
