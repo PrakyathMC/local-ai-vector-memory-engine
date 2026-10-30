@@ -140,10 +140,7 @@ mod tests {
 
     #[test]
     fn empty_id_is_rejected() {
-        assert_eq!(
-            MemoryId::new("  "),
-            Err(MemoryValidationError::EmptyId)
-        );
+        assert_eq!(MemoryId::new("  "), Err(MemoryValidationError::EmptyId));
     }
 
     #[test]

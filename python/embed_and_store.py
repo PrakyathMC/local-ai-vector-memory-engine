@@ -29,7 +29,11 @@ def main() -> None:
     args = parse_args()
     content = args.text if args.text is not None else args.file.read_text(encoding="utf-8")
 
-    model = SentenceTransformer(MODEL_NAME, cache_folder=str(MODEL_DIR))
+    model = SentenceTransformer(
+        MODEL_NAME,
+        cache_folder=str(MODEL_DIR),
+        local_files_only=True,
+    )
     vector = model.encode(content, normalize_embeddings=True).tolist()
 
     memory = Memory(

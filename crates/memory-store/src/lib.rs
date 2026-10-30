@@ -7,10 +7,9 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use memory_core::{
-    EmbeddingProvenance, MemoryId, MemoryRecord, MemoryStatus, MemoryType,
-    MemoryValidationError,
+    EmbeddingProvenance, MemoryId, MemoryRecord, MemoryStatus, MemoryType, MemoryValidationError,
 };
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 use thiserror::Error;
 
 const SCHEMA: &str = r#"
@@ -183,8 +182,14 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<MemoryRecord> {
     let id: String = row.get(0)?;
     let embedding_bytes: Vec<u8> = row.get(2)?;
     let metadata_json: String = row.get(9)?;
-    let metadata: BTreeMap<String, String> = serde_json::from_str(&metadata_json)
-        .map_err(|error| rusqlite::Error::FromSqlConversionFailure(9, rusqlite::types::Type::Text, Box::new(error)))?;
+    let metadata: BTreeMap<String, String> =
+        serde_json::from_str(&metadata_json).map_err(|error| {
+            rusqlite::Error::FromSqlConversionFailure(
+                9,
+                rusqlite::types::Type::Text,
+                Box::new(error),
+            )
+        })?;
 
     let record = MemoryRecord {
         id: MemoryId::new(id).map_err(to_sql_error)?,
@@ -341,7 +346,9 @@ mod tests {
 
         assert!(matches!(
             store.insert(&invalid),
-            Err(StoreError::Validation(MemoryValidationError::EmbeddingDimensionMismatch { .. }))
+            Err(StoreError::Validation(
+                MemoryValidationError::EmbeddingDimensionMismatch { .. }
+            ))
         ));
     }
 
@@ -378,13 +385,22 @@ mod tests {
         updated.content = "Updated content.".into();
         updated.updated_at_ms = 200;
         store.update(&updated).unwrap();
-        assert_eq!(store.get(&original.id).unwrap().unwrap().content, "Updated content.");
+        assert_eq!(
+            store.get(&original.id).unwrap().unwrap().content,
+            "Updated content."
+        );
 
         store.archive(&original.id).unwrap();
-        assert_eq!(store.get(&original.id).unwrap().unwrap().status, MemoryStatus::Archived);
+        assert_eq!(
+            store.get(&original.id).unwrap().unwrap().status,
+            MemoryStatus::Archived
+        );
 
         store.delete(&original.id).unwrap();
-        assert_eq!(store.get(&original.id).unwrap().unwrap().status, MemoryStatus::Deleted);
+        assert_eq!(
+            store.get(&original.id).unwrap().unwrap().status,
+            MemoryStatus::Deleted
+        );
         assert_eq!(store.list(Some("default")).unwrap().len(), 1);
     }
 }

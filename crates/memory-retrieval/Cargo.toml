@@ -1,0 +1,9 @@
+[package]
+name = "memory-retrieval"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+memory-core = { path = "../memory-core" }
+memory-store = { path = "../memory-store" }
+thiserror = "2"
