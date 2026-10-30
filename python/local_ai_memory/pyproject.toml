@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.7,<2"]
+build-backend = "maturin"
+
+[project]
+name = "local-ai-memory"
+version = "0.1.0"
+description = "Python bindings for the Local AI Vector Memory Engine"
+requires-python = ">=3.10"
+
+[tool.maturin]
+manifest-path = "../../crates/memory-python/Cargo.toml"
+module-name = "local_ai_memory"

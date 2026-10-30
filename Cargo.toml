@@ -1,0 +1,8 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/memory-core",
+    "crates/memory-store",
+    "crates/memory-retrieval",
+    "crates/memory-python",
+]

@@ -1,0 +1,12 @@
+[package]
+name = "memory-store"
+version = "0.1.0"
+edition = "2024"
+description = "SQLite persistence for the Local AI Vector Memory Engine"
+license = "MIT"
+
+[dependencies]
+memory-core = { path = "../memory-core" }
+rusqlite = { version = "0.37", features = ["bundled"] }
+serde_json = "1"
+thiserror = "2"

@@ -1,0 +1,6 @@
+# Python tooling for the Local AI Vector Memory Engine
+maturin>=1.7,<2
+pytest>=8,<9
+numpy>=2,<3
+sentence-transformers>=3,<6
+pydantic>=2,<3
