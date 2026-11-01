@@ -1,5 +1,7 @@
 <div align="center">
 
+<a href="https://prakyathmc.github.io/local-ai-vector-memory-engine/explorer/"><img src="assets/memory-engine-header.svg" alt="Animated Local AI Vector Memory Engine header" width="100%"></a>
+
 # Local AI Vector Memory Engine
 
 ### A Python-first AI memory workflow with a Rust-native storage and retrieval core.
@@ -24,6 +26,8 @@
 **Understandable AI infrastructure for local semantic memory, retrieval, and experimentation.**
 
 </div>
+
+<p align="center"><sub><a href="https://prakyathmc.github.io/local-ai-vector-memory-engine/explorer/">Launch the interactive Explorer</a> · <a href="assets/memory-engine-walkthrough.md">Read the animated walkthrough</a> · <a href="#quick-start">Run it locally</a></sub></p>
 
 ## What this is
 
@@ -57,6 +61,10 @@ The project intentionally separates AI experimentation in Python from performanc
 Advanced graph relationships, feedback learning, multi-agent shared memory, and generation adapters are intentionally future work. They are not presented as implemented features.
 
 ## See it visually
+
+<a href="https://prakyathmc.github.io/local-ai-vector-memory-engine/explorer/"><img src="assets/memory-engine-trailer.svg" alt="Animated Local AI Vector Memory Engine trailer" width="100%"></a>
+
+<p align="center"><sub>Click the trailer to open the interactive Explorer.</sub></p>
 
 ### Interactive Explorer
 
@@ -115,6 +123,37 @@ On the current synthetic 1,000-vector benchmark:
 | HNSW process RSS increase | 8.820 MB |
 
 These are workload-specific learning measurements, not production performance claims.
+
+## Animated walkthrough
+
+<details>
+<summary><strong>Open the full eight-chapter walkthrough</strong></summary>
+
+The walkthrough explains the current system in plain language: chunking, embeddings, persistence, exact retrieval, HNSW, evidence, evaluation, and the next frontier.
+
+→ [Open the animated walkthrough](assets/memory-engine-walkthrough.md)
+
+</details>
+
+<details>
+<summary><strong>What the current Explorer does</strong></summary>
+
+- Shows a query moving through embedding, index selection, ranking, and evidence.
+- Switches between exact search and HNSW ANN modes.
+- Filters the conceptual memory graph by namespace.
+- Highlights returned memories and displays ranked scores.
+- Explains that the graph is a visual projection, not the 384-dimensional retrieval space.
+
+</details>
+
+<details>
+<summary><strong>What is implemented versus planned</strong></summary>
+
+**Implemented:** SQLite persistence, local BGE embeddings, chunk ingestion, exact cosine retrieval, HNSW retrieval, filters, lifecycle controls, evaluation, benchmarks, and Streamlit inspection.
+
+**Planned:** feedback learning, graph relationships, richer query traces, and a RAG context API.
+
+</details>
 
 ## Quick start
 
@@ -177,6 +216,11 @@ python/
 
 explorer/
 └── index.html           GitHub Pages interactive architecture explorer
+
+assets/
+├── memory-engine-header.svg      Animated README header
+├── memory-engine-trailer.svg     Clickable README trailer
+└── memory-engine-walkthrough.md  Chapter-based visual explanation
 ```
 
 ## Design principles
