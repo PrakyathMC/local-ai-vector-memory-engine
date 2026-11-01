@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 260" role="img" aria-labelledby="title desc">
+  <title id="title">Local AI Vector Memory Engine</title>
+  <desc id="desc">Animated vector memory graph with a query moving through storage and retrieval.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1"><stop stop-color="#080b16"/><stop offset=".55" stop-color="#101735"/><stop offset="1" stop-color="#241034"/></linearGradient>
+    <linearGradient id="mint" x1="0" x2="1"><stop stop-color="#5ee7f7"/><stop offset="1" stop-color="#a78bfa"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="7" result="blur"/><feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <style>
+      text{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.grid{stroke:#26325d;stroke-width:1;opacity:.42}.edge{stroke:#5364a2;stroke-width:2;opacity:.6}.pulse{animation:pulse 3s ease-in-out infinite}.scan{animation:scan 4s linear infinite}.particle{animation:travel 5s linear infinite}@keyframes pulse{50%{opacity:.32;transform:scale(1.2);transform-origin:center}}@keyframes scan{from{transform:translateX(-260px)}to{transform:translateX(1500px)}}@keyframes travel{0%{offset-distance:0%;opacity:0}12%{opacity:1}88%{opacity:1}100%{offset-distance:100%;opacity:0}}
+    </style>
+    <path id="route" d="M1140 132 C1010 132 980 218 850 218 S600 55 430 112 S210 152 70 132"/>
+  </defs>
+  <rect width="1400" height="260" rx="22" fill="url(#bg)"/>
+  <g opacity=".7"> <path class="grid" d="M0 52H1400M0 104H1400M0 156H1400M0 208H1400M140 0V260M280 0V260M420 0V260M560 0V260M700 0V260M840 0V260M980 0V260M1120 0V260M1260 0V260"/> </g>
+  <g class="edge" fill="none"><path d="M70 132L250 74L430 112L610 55L850 218L1030 72L1140 132"/><path d="M250 74L330 205L430 112L540 210L850 218L950 188L1030 72"/></g>
+  <g fill="#17244b" stroke="#6279c6" stroke-width="2"><circle cx="70" cy="132" r="9"/><circle cx="250" cy="74" r="7"/><circle cx="330" cy="205" r="6"/><circle cx="430" cy="112" r="10"/><circle cx="540" cy="210" r="7"/><circle cx="610" cy="55" r="6"/><circle cx="850" cy="218" r="11"/><circle cx="950" cy="188" r="6"/><circle cx="1030" cy="72" r="8"/><circle cx="1140" cy="132" r="10"/></g>
+  <circle class="pulse" cx="430" cy="112" r="22" fill="none" stroke="#5ee7f7" stroke-width="2" filter="url(#glow)"/>
+  <circle class="pulse" cx="850" cy="218" r="22" fill="none" stroke="#f472b6" stroke-width="2" filter="url(#glow)"/>
+  <circle class="particle" r="5" fill="#5ee7f7" filter="url(#glow)" style="offset-path:path('M1140 132 C1010 132 980 218 850 218 S600 55 430 112 S210 152 70 132')"/>
+  <rect class="scan" x="0" y="0" width="2" height="260" fill="#5ee7f7" opacity=".25"/>
+  <g fill="#f6f7ff"><text x="70" y="42" font-size="22" font-weight="700">LOCAL AI VECTOR MEMORY ENGINE</text><text x="70" y="68" font-size="12" fill="#9da7cf">PYTHON AI WORKFLOWS · RUST RETRIEVAL CORE · SQLITE SOURCE OF TRUTH</text></g>
+  <g font-size="11" fill="#9da7cf"><text x="45" y="164">QUERY</text><text x="395" y="94">EMBED</text><text x="808" y="249">HNSW / EXACT</text><text x="1080" y="164">EVIDENCE</text></g>
+  <g transform="translate(70 222)"><rect width="240" height="1" fill="url(#mint)"/><text y="25" font-size="11" fill="#5ee7f7">MEMORY THAT YOU CAN INSPECT</text></g>
+</svg>

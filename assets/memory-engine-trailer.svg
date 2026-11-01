@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 620" role="img" aria-labelledby="title desc">
+  <title id="title">Local AI Vector Memory Engine animated trailer</title>
+  <desc id="desc">A conceptual animated walkthrough of chunking, embedding, storage, exact retrieval, HNSW retrieval, and evidence.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#070a13"/><stop offset="1" stop-color="#16102b"/></linearGradient>
+    <linearGradient id="line"><stop stop-color="#5ee7f7"/><stop offset="1" stop-color="#f472b6"/></linearGradient>
+    <filter id="glow"><feGaussianBlur stdDeviation="5" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+    <style>
+      text{font-family:ui-monospace,SFMono-Regular,Consolas,monospace}.edge{fill:none;stroke:#40518f;stroke-width:2;opacity:.7}.hot{fill:none;stroke:url(#line);stroke-width:4;stroke-dasharray:18 12;animation:dash 3s linear infinite}.node{fill:#121c40;stroke:#6477c2;stroke-width:2}.hotnode{fill:#135c6d;stroke:#5ee7f7;stroke-width:3;animation:glow 2.4s ease-in-out infinite}.tag{fill:#9da7cf;font-size:12px}.phase{opacity:0}.p0{animation:p0 18s linear infinite}.p1{animation:p1 18s linear infinite}.p2{animation:p2 18s linear infinite}.p3{animation:p3 18s linear infinite}.p4{animation:p4 18s linear infinite}@keyframes dash{to{stroke-dashoffset:-60}}@keyframes glow{50%{filter:url(#glow);opacity:.65}}@keyframes p0{0%,18%{opacity:1}20%,100%{opacity:0}}@keyframes p1{0%,18%{opacity:0}20%,38%{opacity:1}40%,100%{opacity:0}}@keyframes p2{0%,38%{opacity:0}40%,58%{opacity:1}60%,100%{opacity:0}}@keyframes p3{0%,58%{opacity:0}60%,78%{opacity:1}80%,100%{opacity:0}}@keyframes p4{0%,78%{opacity:0}80%,98%{opacity:1}100%{opacity:0}}
+    </style>
+  </defs>
+  <rect width="1200" height="620" rx="22" fill="url(#bg)"/>
+  <text x="55" y="64" fill="#f6f7ff" font-size="28" font-weight="700">SEARCH · REMEMBER · EXPLAIN</text>
+  <text x="55" y="92" fill="#9da7cf" font-size="13">A small, inspectable vector-memory engine for local AI workflows</text>
+  <g transform="translate(40 126)">
+    <path class="edge" d="M100 190L270 85L455 190L650 75L820 190L1000 105"/><path class="edge" d="M100 190L270 310L455 190L650 310L820 190L1000 300"/>
+    <path class="hot" d="M100 190L270 85L455 190L650 75L820 190L1000 105"/>
+    <g class="phase p0"><circle class="hotnode" cx="100" cy="190" r="28"/><text x="65" y="250" class="tag">CHUNK</text><text x="52" y="270" class="tag">document → memories</text></g>
+    <g class="phase p1"><circle class="hotnode" cx="270" cy="85" r="28"/><text x="232" y="48" class="tag">EMBED</text><text x="218" y="28" class="tag">BGE · 384D</text></g>
+    <g class="phase p2"><circle class="hotnode" cx="455" cy="190" r="28"/><text x="416" y="250" class="tag">STORE</text><text x="375" y="270" class="tag">SQLite + provenance</text></g>
+    <g class="phase p3"><circle class="hotnode" cx="650" cy="75" r="28"/><text x="601" y="38" class="tag">RETRIEVE</text><text x="600" y="18" class="tag">exact / HNSW</text></g>
+    <g class="phase p4"><circle class="hotnode" cx="820" cy="190" r="28"/><text x="786" y="250" class="tag">RANK</text><text x="753" y="270" class="tag">cosine + filters</text></g>
+    <g class="phase p4"><circle class="hotnode" cx="1000" cy="105" r="28"/><text x="962" y="68" class="tag">EVIDENCE</text><text x="950" y="48" class="tag">inspectable result</text></g>
+    <g fill="#15234b" stroke="#5669ad" stroke-width="2"><circle cx="270" cy="310" r="8"/><circle cx="455" cy="190" r="8"/><circle cx="650" cy="310" r="8"/><circle cx="820" cy="190" r="8"/><circle cx="1000" cy="300" r="8"/></g>
+  </g>
+  <g transform="translate(55 535)"><rect width="1090" height="1" fill="#334274"/><text y="32" fill="#5ee7f7" font-size="12">RUST CORE</text><text x="150" y="32" fill="#a78bfa" font-size="12">PYTHON AI WORKFLOW</text><text x="390" y="32" fill="#f472b6" font-size="12">SQLITE PERSISTENCE</text><text x="650" y="32" fill="#5ee6a8" font-size="12">EVALUATION FIRST</text></g>
+</svg>
