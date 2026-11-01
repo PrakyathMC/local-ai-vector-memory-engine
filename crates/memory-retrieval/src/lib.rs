@@ -213,12 +213,30 @@ mod tests {
         let mut archived = memory("archived", vec![1.0, 0.0]);
         archived.status = MemoryStatus::Archived;
         store.insert(&archived).unwrap();
+        let mut deleted = memory("deleted", vec![1.0, 0.0]);
+        deleted.status = MemoryStatus::Deleted;
+        store.insert(&deleted).unwrap();
 
         let hits = search(&store, &[1.0, 0.0], 5, None).unwrap();
         assert_eq!(hits.len(), 2);
         assert_eq!(hits[0].memory.id.as_str(), "exact");
         assert!((hits[0].score - 1.0).abs() < 1e-6);
         assert_eq!(hits[1].memory.id.as_str(), "different");
+    }
+
+    #[test]
+    fn empty_store_returns_no_hits_and_ties_are_deterministic() {
+        let empty_store = MemoryStore::in_memory().unwrap();
+        assert!(search(&empty_store, &[1.0, 0.0], 5, None)
+            .unwrap()
+            .is_empty());
+
+        let store = MemoryStore::in_memory().unwrap();
+        store.insert(&memory("b", vec![1.0, 0.0])).unwrap();
+        store.insert(&memory("a", vec![1.0, 0.0])).unwrap();
+        let hits = search(&store, &[1.0, 0.0], 5, None).unwrap();
+        assert_eq!(hits[0].memory.id.as_str(), "a");
+        assert_eq!(hits[1].memory.id.as_str(), "b");
     }
 
     #[test]

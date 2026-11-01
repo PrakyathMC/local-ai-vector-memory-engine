@@ -50,6 +50,7 @@ def ingest_text(
     namespace: str = "default",
     chunk_size: int = 200,
     overlap: int = 40,
+    memory_type: str = "note",
 ) -> int:
     """Embed and upsert all chunks from one source. Returns chunk count."""
     chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)
@@ -82,6 +83,7 @@ def ingest_text(
             created_at_ms=now_ms,
             updated_at_ms=now_ms,
             normalized=provider.normalized,
+            memory_type=memory_type,
         )
         if store.get(memory_id) is None:
             store.insert(memory)
@@ -103,6 +105,7 @@ def ingest_file(
     namespace: str = "default",
     chunk_size: int = 200,
     overlap: int = 40,
+    memory_type: str = "note",
 ) -> int:
     """Load, embed, and store one Markdown or text file."""
     if path.suffix.lower() not in {".md", ".markdown", ".txt"}:
@@ -116,7 +119,7 @@ def ingest_file(
         MODEL_DIMENSIONS,
     )
     store = MemoryStore(database)
-    return ingest_text(text, source, store, provider, namespace, chunk_size, overlap)
+    return ingest_text(text, source, store, provider, namespace, chunk_size, overlap, memory_type)
 
 
 def main() -> None:

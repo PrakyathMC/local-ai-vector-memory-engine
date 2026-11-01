@@ -157,6 +157,7 @@ def memory_explorer(memories: list[dict[str, object]]) -> None:
                 "Source": memory["source"],
                 "Namespace": memory["namespace"],
                 "Type": memory["type"],
+                "Created (ms)": memory["created_at_ms"],
                 "Dimensions": memory["dimensions"],
                 "Content preview": str(memory["content"])[:120],
             }
@@ -192,6 +193,11 @@ def ingestion_view(path: Path) -> None:
     st.write("Preview the chunks before embedding them into SQLite.")
     uploaded = st.file_uploader("Choose a Markdown or text file", type=["md", "markdown", "txt"])
     source = st.text_input("Source label", value=uploaded.name if uploaded else "notes/example.md")
+    namespace = st.text_input("Namespace", value="default")
+    memory_type = st.selectbox(
+        "Memory type",
+        ["document", "fact", "decision", "event", "note", "procedure"],
+    )
     chunk_size = st.number_input("Chunk size (words)", min_value=10, value=200, step=10)
     overlap = st.number_input("Overlap (words)", min_value=0, value=40, step=5)
     text = uploaded.getvalue().decode("utf-8") if uploaded else st.text_area("Or paste text", height=180)
@@ -211,7 +217,16 @@ def ingestion_view(path: Path) -> None:
         if st.button("Embed and store chunks", type="primary"):
             provider = get_provider()
             store = load_store(path)
-            count = ingest_text(text, source, store, provider, chunk_size=int(chunk_size), overlap=int(overlap))
+            count = ingest_text(
+                text,
+                source,
+                store,
+                provider,
+                namespace=namespace,
+                chunk_size=int(chunk_size),
+                overlap=int(overlap),
+                memory_type=memory_type,
+            )
             st.success(f"Stored {count} chunks in {path}.")
             st.rerun()
 

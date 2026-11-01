@@ -1,0 +1,26 @@
+[
+  {
+    "id": "storage",
+    "source": "evaluation/storage.md",
+    "text": "The Rust memory store persists memory records and embeddings in SQLite. It supports atomic batch insertion, schema metadata, model configuration, and reopening the database after a restart.",
+    "query": "How are memory records and embeddings persisted?"
+  },
+  {
+    "id": "ingestion",
+    "source": "evaluation/ingestion.md",
+    "text": "The Python ingestion pipeline loads Markdown and plain-text documents, splits them into overlapping chunks, generates local BGE embeddings, and records source and chunk-boundary metadata.",
+    "query": "How does the system turn a document into embedded chunks?"
+  },
+  {
+    "id": "retrieval",
+    "source": "evaluation/retrieval.md",
+    "text": "Exact retrieval validates the query embedding, applies namespace source type status and time filters, calculates cosine similarity, and returns the highest-scoring active memories.",
+    "query": "How are relevant memories ranked and filtered?"
+  },
+  {
+    "id": "lifecycle",
+    "source": "evaluation/lifecycle.md",
+    "text": "Memory lifecycle controls allow records to be restored, archived, or soft-deleted. Archived and deleted records are excluded from normal active retrieval.",
+    "query": "What happens when a memory is archived or deleted?"
+  }
+]

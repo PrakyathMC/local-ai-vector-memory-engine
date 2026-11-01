@@ -52,7 +52,7 @@ fn parse_memory_status(value: Option<String>) -> PyResult<Option<MemoryStatus>> 
 #[pymethods]
 impl Memory {
     #[new]
-    #[pyo3(signature = (id, content, embedding, namespace="default".to_string(), model="test-embedder".to_string(), source=None, metadata=None, created_at_ms=0, updated_at_ms=0, normalized=false))]
+    #[pyo3(signature = (id, content, embedding, namespace="default".to_string(), model="test-embedder".to_string(), source=None, metadata=None, created_at_ms=0, updated_at_ms=0, normalized=false, memory_type="note".to_string()))]
     fn new(
         id: String,
         content: String,
@@ -64,15 +64,17 @@ impl Memory {
         created_at_ms: u64,
         updated_at_ms: u64,
         normalized: bool,
+        memory_type: String,
     ) -> PyResult<Self> {
         let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
         let dimensions = embedding.len();
+        let memory_type = parse_memory_type(Some(memory_type))?.unwrap_or(MemoryType::Note);
         let record = MemoryRecord {
             id,
             content,
             embedding,
             source,
-            memory_type: MemoryType::Note,
+            memory_type,
             namespace,
             created_at_ms,
             updated_at_ms,
