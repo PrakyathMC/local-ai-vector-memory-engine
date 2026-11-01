@@ -6,4 +6,5 @@ edition = "2021"
 [dependencies]
 memory-core = { path = "../memory-core" }
 memory-store = { path = "../memory-store" }
+hnsw_rs = "0.3"
 thiserror = "2"

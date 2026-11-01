@@ -3,10 +3,11 @@
 //! This module intentionally exposes only a small validated object. Storage,
 //! embeddings, and retrieval will be added in later sprints.
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 
 use memory_core::{EmbeddingProvenance, MemoryId, MemoryRecord, MemoryStatus, MemoryType};
-use memory_retrieval::search;
+use memory_retrieval::{HnswIndex, SearchOptions, search_with_options};
 use memory_store::MemoryStore;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -22,10 +23,37 @@ impl Memory {
     }
 }
 
+fn parse_memory_type(value: Option<String>) -> PyResult<Option<MemoryType>> {
+    match value.as_deref() {
+        None => Ok(None),
+        Some("document") => Ok(Some(MemoryType::Document)),
+        Some("fact") => Ok(Some(MemoryType::Fact)),
+        Some("decision") => Ok(Some(MemoryType::Decision)),
+        Some("event") => Ok(Some(MemoryType::Event)),
+        Some("note") => Ok(Some(MemoryType::Note)),
+        Some("procedure") => Ok(Some(MemoryType::Procedure)),
+        Some(other) => Err(PyValueError::new_err(format!(
+            "unknown memory type: {other}"
+        ))),
+    }
+}
+
+fn parse_memory_status(value: Option<String>) -> PyResult<Option<MemoryStatus>> {
+    match value.as_deref() {
+        None => Ok(None),
+        Some("active") => Ok(Some(MemoryStatus::Active)),
+        Some("archived") => Ok(Some(MemoryStatus::Archived)),
+        Some("deleted") => Ok(Some(MemoryStatus::Deleted)),
+        Some(other) => Err(PyValueError::new_err(format!(
+            "unknown memory status: {other}"
+        ))),
+    }
+}
+
 #[pymethods]
 impl Memory {
     #[new]
-    #[pyo3(signature = (id, content, embedding, namespace="default".to_string(), model="test-embedder".to_string(), source=None, metadata=None, created_at_ms=0, updated_at_ms=0, normalized=false))]
+    #[pyo3(signature = (id, content, embedding, namespace="default".to_string(), model="test-embedder".to_string(), source=None, metadata=None, created_at_ms=0, updated_at_ms=0, normalized=false, memory_type="note".to_string()))]
     fn new(
         id: String,
         content: String,
@@ -37,15 +65,17 @@ impl Memory {
         created_at_ms: u64,
         updated_at_ms: u64,
         normalized: bool,
+        memory_type: String,
     ) -> PyResult<Self> {
         let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
         let dimensions = embedding.len();
+        let memory_type = parse_memory_type(Some(memory_type))?.unwrap_or(MemoryType::Note);
         let record = MemoryRecord {
             id,
             content,
             embedding,
             source,
-            memory_type: MemoryType::Note,
+            memory_type,
             namespace,
             created_at_ms,
             updated_at_ms,
@@ -91,6 +121,31 @@ impl Memory {
     }
 
     #[getter]
+    fn embedding(&self) -> Vec<f32> {
+        self.record.embedding.clone()
+    }
+
+    #[getter]
+    fn metadata(&self) -> BTreeMap<String, String> {
+        self.record.metadata.clone()
+    }
+
+    #[getter]
+    fn created_at_ms(&self) -> u64 {
+        self.record.created_at_ms
+    }
+
+    #[getter]
+    fn updated_at_ms(&self) -> u64 {
+        self.record.updated_at_ms
+    }
+
+    #[getter]
+    fn normalized(&self) -> bool {
+        self.record.embedding_provenance.normalized
+    }
+
+    #[getter]
     fn embedding_model(&self) -> &str {
         &self.record.embedding_provenance.model
     }
@@ -124,6 +179,7 @@ impl Memory {
 #[pyclass(name = "MemoryStore", unsendable)]
 pub struct Store {
     inner: MemoryStore,
+    hnsw_indices: RefCell<HashMap<Option<String>, HnswIndex>>,
 }
 
 #[pymethods]
@@ -132,13 +188,18 @@ impl Store {
     fn new(path: String) -> PyResult<Self> {
         let inner =
             MemoryStore::open(path).map_err(|error| PyValueError::new_err(error.to_string()))?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            hnsw_indices: RefCell::new(HashMap::new()),
+        })
     }
 
     fn insert(&self, memory: PyRef<'_, Memory>) -> PyResult<()> {
         self.inner
             .insert(&memory.record)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.hnsw_indices.borrow_mut().clear();
+        Ok(())
     }
 
     fn get(&self, id: String) -> PyResult<Option<Memory>> {
@@ -158,14 +219,85 @@ impl Store {
         Ok(records.into_iter().map(Memory::from_record).collect())
     }
 
-    #[pyo3(signature = (query, top_k=5, namespace=None))]
+    #[pyo3(signature = (query, top_k=5, namespace=None, source=None, memory_type=None, status=None, min_created_at_ms=None, max_created_at_ms=None, model=None))]
     fn search(
         &self,
         query: Vec<f32>,
         top_k: usize,
         namespace: Option<String>,
+        source: Option<String>,
+        memory_type: Option<String>,
+        status: Option<String>,
+        min_created_at_ms: Option<u64>,
+        max_created_at_ms: Option<u64>,
+        model: Option<String>,
     ) -> PyResult<Vec<SearchResult>> {
-        let hits = search(&self.inner, &query, top_k, namespace.as_deref())
+        let options = SearchOptions {
+            top_k,
+            namespace,
+            source,
+            memory_type: parse_memory_type(memory_type)?,
+            status: parse_memory_status(status)?,
+            min_created_at_ms,
+            max_created_at_ms,
+            query_model: model,
+        };
+        let hits = search_with_options(&self.inner, &query, options)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        Ok(hits.into_iter().map(SearchResult::from_hit).collect())
+    }
+
+    /// Search a cached HNSW snapshot of active memories.
+    ///
+    /// SQLite remains the source of truth. Successful writes invalidate all
+    /// cached namespace snapshots; the next HNSW query rebuilds lazily.
+    #[pyo3(signature = (query, top_k=5, ef_search=64, namespace=None, model=None))]
+    fn search_hnsw(
+        &self,
+        query: Vec<f32>,
+        top_k: usize,
+        ef_search: usize,
+        namespace: Option<String>,
+        model: Option<String>,
+    ) -> PyResult<Vec<SearchResult>> {
+        if let Some((expected_model, expected_dimensions)) = self
+            .inner
+            .embedding_configuration()
+            .map_err(|error| PyValueError::new_err(error.to_string()))?
+        {
+            if query.len() != expected_dimensions {
+                return Err(PyValueError::new_err(format!(
+                    "query embedding dimensions do not match the database: expected {}, received {}",
+                    expected_dimensions,
+                    query.len()
+                )));
+            }
+            if let Some(actual_model) = model.as_deref() {
+                if actual_model != expected_model {
+                    return Err(PyValueError::new_err(format!(
+                        "query embedding model does not match the database: expected {}, received {}",
+                        expected_model, actual_model
+                    )));
+                }
+            }
+        }
+
+        let cache_key = namespace.clone();
+        let mut indices = self.hnsw_indices.borrow_mut();
+        if !indices.contains_key(&cache_key) {
+            let records = self
+                .inner
+                .list(namespace.as_deref())
+                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            let index = HnswIndex::build(&records)
+                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            indices.insert(cache_key.clone(), index);
+        }
+        let index = indices
+            .get(&cache_key)
+            .expect("HNSW index was inserted above");
+        let hits = index
+            .search(&query, top_k, ef_search)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
         Ok(hits.into_iter().map(SearchResult::from_hit).collect())
     }
@@ -173,21 +305,36 @@ impl Store {
     fn update(&self, memory: PyRef<'_, Memory>) -> PyResult<()> {
         self.inner
             .update(&memory.record)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.hnsw_indices.borrow_mut().clear();
+        Ok(())
     }
 
     fn archive(&self, id: String) -> PyResult<()> {
         let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
         self.inner
             .archive(&id)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.hnsw_indices.borrow_mut().clear();
+        Ok(())
     }
 
     fn delete(&self, id: String) -> PyResult<()> {
         let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
         self.inner
             .delete(&id)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.hnsw_indices.borrow_mut().clear();
+        Ok(())
+    }
+
+    fn restore(&self, id: String) -> PyResult<()> {
+        let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.inner
+            .restore(&id)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.hnsw_indices.borrow_mut().clear();
+        Ok(())
     }
 }
 
@@ -201,6 +348,16 @@ pub struct SearchResult {
     pub score: f32,
     #[pyo3(get)]
     pub namespace: String,
+    #[pyo3(get)]
+    pub source: Option<String>,
+    #[pyo3(get)]
+    pub status: String,
+    #[pyo3(get)]
+    pub embedding_model: String,
+    #[pyo3(get)]
+    pub dimensions: usize,
+    #[pyo3(get)]
+    pub metadata: BTreeMap<String, String>,
 }
 
 impl SearchResult {
@@ -210,6 +367,15 @@ impl SearchResult {
             content: hit.memory.content,
             score: hit.score,
             namespace: hit.memory.namespace,
+            source: hit.memory.source,
+            status: match hit.memory.status {
+                MemoryStatus::Active => "active".into(),
+                MemoryStatus::Archived => "archived".into(),
+                MemoryStatus::Deleted => "deleted".into(),
+            },
+            embedding_model: hit.memory.embedding_provenance.model,
+            dimensions: hit.memory.embedding_provenance.dimensions,
+            metadata: hit.memory.metadata,
         }
     }
 }

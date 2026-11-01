@@ -98,7 +98,7 @@ def test_python_can_search_active_memories_by_similarity():
     store = None
     try:
         store = MemoryStore(str(database))
-        store.insert(Memory("exact", "Exact match", [1.0, 0.0]))
+        store.insert(Memory("exact", "Exact match", [1.0, 0.0], source="notes/exact.md"))
         store.insert(Memory("different", "Different direction", [0.0, 1.0]))
         store.insert(Memory("archived", "Should not be returned", [1.0, 0.0]))
         store.archive("archived")
@@ -108,6 +108,42 @@ def test_python_can_search_active_memories_by_similarity():
         assert [result.id for result in results] == ["exact", "different"]
         assert results[0].score > results[1].score
         assert results[0].content == "Exact match"
+
+        filtered = store.search(
+            [1.0, 0.0],
+            source="notes/exact.md",
+            model="test-embedder",
+        )
+        assert [result.id for result in filtered] == ["exact"]
+    finally:
+        del store
+        gc.collect()
+        if database.exists():
+            database.unlink()
+
+
+def test_python_can_search_active_memories_with_hnsw():
+    database = Path(__file__).parents[2] / "data/python-hnsw-test.db"
+    if database.exists():
+        database.unlink()
+
+    store = None
+    try:
+        store = MemoryStore(str(database))
+        store.insert(Memory("near", "Nearest memory", [1.0, 0.0]))
+        store.insert(Memory("far", "Other direction", [0.0, 1.0]))
+        store.insert(Memory("other-namespace", "Different namespace", [1.0, 0.0], namespace="other"))
+
+        results = store.search_hnsw(
+            [1.0, 0.0],
+            top_k=2,
+            ef_search=32,
+            namespace="default",
+            model="test-embedder",
+        )
+
+        assert [result.id for result in results] == ["near", "far"]
+        assert results[0].score > results[1].score
     finally:
         del store
         gc.collect()
