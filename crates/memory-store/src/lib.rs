@@ -166,6 +166,27 @@ impl MemoryStore {
         self.metadata_value("distance_metric")
     }
 
+    pub fn embedding_configuration(&self) -> Result<Option<(String, usize)>, StoreError> {
+        let model = self.metadata_value_optional("embedding_model")?;
+        let dimensions = self.metadata_value_optional("embedding_dimensions")?;
+
+        match (model, dimensions) {
+            (None, None) => Ok(None),
+            (Some(model), Some(dimensions)) => {
+                let dimensions =
+                    dimensions
+                        .parse()
+                        .map_err(|_| StoreError::InvalidMetadataValue {
+                            key: "embedding_dimensions".into(),
+                        })?;
+                Ok(Some((model, dimensions)))
+            }
+            _ => Err(StoreError::InvalidMetadataValue {
+                key: "embedding_configuration".into(),
+            }),
+        }
+    }
+
     fn metadata_value(&self, key: &str) -> Result<String, StoreError> {
         self.connection
             .query_row(

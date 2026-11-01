@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use memory_core::{EmbeddingProvenance, MemoryId, MemoryRecord, MemoryStatus, MemoryType};
-use memory_retrieval::search;
+use memory_retrieval::{SearchOptions, search_with_options};
 use memory_store::MemoryStore;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -19,6 +19,33 @@ pub struct Memory {
 impl Memory {
     fn from_record(record: MemoryRecord) -> Self {
         Self { record }
+    }
+}
+
+fn parse_memory_type(value: Option<String>) -> PyResult<Option<MemoryType>> {
+    match value.as_deref() {
+        None => Ok(None),
+        Some("document") => Ok(Some(MemoryType::Document)),
+        Some("fact") => Ok(Some(MemoryType::Fact)),
+        Some("decision") => Ok(Some(MemoryType::Decision)),
+        Some("event") => Ok(Some(MemoryType::Event)),
+        Some("note") => Ok(Some(MemoryType::Note)),
+        Some("procedure") => Ok(Some(MemoryType::Procedure)),
+        Some(other) => Err(PyValueError::new_err(format!(
+            "unknown memory type: {other}"
+        ))),
+    }
+}
+
+fn parse_memory_status(value: Option<String>) -> PyResult<Option<MemoryStatus>> {
+    match value.as_deref() {
+        None => Ok(None),
+        Some("active") => Ok(Some(MemoryStatus::Active)),
+        Some("archived") => Ok(Some(MemoryStatus::Archived)),
+        Some("deleted") => Ok(Some(MemoryStatus::Deleted)),
+        Some(other) => Err(PyValueError::new_err(format!(
+            "unknown memory status: {other}"
+        ))),
     }
 }
 
@@ -183,14 +210,30 @@ impl Store {
         Ok(records.into_iter().map(Memory::from_record).collect())
     }
 
-    #[pyo3(signature = (query, top_k=5, namespace=None))]
+    #[pyo3(signature = (query, top_k=5, namespace=None, source=None, memory_type=None, status=None, min_created_at_ms=None, max_created_at_ms=None, model=None))]
     fn search(
         &self,
         query: Vec<f32>,
         top_k: usize,
         namespace: Option<String>,
+        source: Option<String>,
+        memory_type: Option<String>,
+        status: Option<String>,
+        min_created_at_ms: Option<u64>,
+        max_created_at_ms: Option<u64>,
+        model: Option<String>,
     ) -> PyResult<Vec<SearchResult>> {
-        let hits = search(&self.inner, &query, top_k, namespace.as_deref())
+        let options = SearchOptions {
+            top_k,
+            namespace,
+            source,
+            memory_type: parse_memory_type(memory_type)?,
+            status: parse_memory_status(status)?,
+            min_created_at_ms,
+            max_created_at_ms,
+            query_model: model,
+        };
+        let hits = search_with_options(&self.inner, &query, options)
             .map_err(|error| PyValueError::new_err(error.to_string()))?;
         Ok(hits.into_iter().map(SearchResult::from_hit).collect())
     }

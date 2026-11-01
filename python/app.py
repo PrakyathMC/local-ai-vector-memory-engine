@@ -220,11 +220,41 @@ def search_view(path: Path) -> None:
     st.header("Search playground")
     query = st.text_area("Natural-language query", placeholder="How does this project store memories?")
     top_k = st.slider("Results", min_value=1, max_value=20, value=5)
+    _, records = read_database(path)
+    sources = sorted({str(record["source"]) for record in records if record["source"]})
+    namespaces = sorted({str(record["namespace"]) for record in records})
+    memory_types = sorted({str(record["type"]) for record in records})
+    filter_columns = st.columns(4)
+    with filter_columns[0]:
+        namespace_filter = st.selectbox("Namespace", ["Any"] + namespaces)
+    with filter_columns[1]:
+        source_filter = st.selectbox("Source", ["Any"] + sources)
+    with filter_columns[2]:
+        type_filter = st.selectbox("Memory type", ["Any"] + memory_types)
+    with filter_columns[3]:
+        status_filter = st.selectbox("Status", ["active", "archived", "deleted"])
+
+    time_columns = st.columns(2)
+    with time_columns[0]:
+        min_time = st.number_input("Minimum created_at_ms (0 = any)", min_value=0, value=0)
+    with time_columns[1]:
+        max_time = st.number_input("Maximum created_at_ms (0 = any)", min_value=0, value=0)
+
     if st.button("Search", type="primary") and query.strip():
         try:
             provider = get_provider()
             vector = provider.embed([query])[0]
-            results = load_store(path).search(vector, top_k=top_k)
+            results = load_store(path).search(
+                vector,
+                top_k=top_k,
+                namespace=None if namespace_filter == "Any" else namespace_filter,
+                source=None if source_filter == "Any" else source_filter,
+                memory_type=None if type_filter == "Any" else type_filter,
+                status=status_filter,
+                min_created_at_ms=None if min_time == 0 else int(min_time),
+                max_created_at_ms=None if max_time == 0 else int(max_time),
+                model=provider.model_name,
+            )
         except ValueError as error:
             st.error(str(error))
             return
