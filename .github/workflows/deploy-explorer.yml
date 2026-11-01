@@ -24,12 +24,20 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
       - name: Configure Pages
         uses: actions/configure-pages@v5
+      - name: Prepare Pages site
+        shell: bash
+        run: |
+          mkdir -p _site/explorer
+          cp explorer/index.html _site/explorer/index.html
+          cp explorer/index.html _site/index.html
       - name: Upload Explorer artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          path: explorer
+          path: _site
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
