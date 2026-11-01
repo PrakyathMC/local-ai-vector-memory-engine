@@ -106,10 +106,13 @@ On the current synthetic 1,000-vector benchmark:
 
 | Measurement | Result |
 | --- | ---: |
-| Exact p50 query latency | 15.166 ms |
-| HNSW build + first query | 2471.426 ms |
-| HNSW warm p50 query latency | 1.618 ms |
+| Exact p50 query latency | 13.454 ms |
+| HNSW build + first query | 2414.230 ms |
+| HNSW warm p50 query latency | 1.670 ms |
 | HNSW recall of exact top-10 | 100% |
+| SQLite file size | 1.996 MB |
+| Raw vector payload | 1.465 MB |
+| HNSW process RSS increase | 8.820 MB |
 
 These are workload-specific learning measurements, not production performance claims.
 

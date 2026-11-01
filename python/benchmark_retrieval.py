@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
+import os
 import statistics
+import sys
+from ctypes import wintypes
 import time
 from pathlib import Path
 
@@ -13,6 +17,49 @@ from local_ai_memory import Memory, MemoryStore
 
 
 PROJECT_ROOT = Path(__file__).parents[1]
+
+
+def process_rss_bytes() -> int | None:
+    """Return current process RSS where the operating system exposes it."""
+    if sys.platform == "win32":
+        class ProcessMemoryCounters(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.c_ulong),
+                ("page_fault_count", ctypes.c_ulong),
+                ("peak_working_set_size", ctypes.c_size_t),
+                ("working_set_size", ctypes.c_size_t),
+                ("quota_peak_paged_pool_usage", ctypes.c_size_t),
+                ("quota_paged_pool_usage", ctypes.c_size_t),
+                ("quota_peak_non_paged_pool_usage", ctypes.c_size_t),
+                ("quota_non_paged_pool_usage", ctypes.c_size_t),
+                ("pagefile_usage", ctypes.c_size_t),
+                ("peak_pagefile_usage", ctypes.c_size_t),
+            ]
+
+        counters = ProcessMemoryCounters()
+        counters.cb = ctypes.sizeof(counters)
+        process = ctypes.WinDLL("kernel32.dll").GetCurrentProcess()
+        get_memory_info = ctypes.WinDLL("psapi.dll").GetProcessMemoryInfo
+        get_memory_info.argtypes = [
+            wintypes.HANDLE,
+            ctypes.POINTER(ProcessMemoryCounters),
+            wintypes.DWORD,
+        ]
+        get_memory_info.restype = wintypes.BOOL
+        success = get_memory_info(
+            process,
+            ctypes.byref(counters),
+            counters.cb,
+        )
+        return int(counters.working_set_size) if success else None
+
+    try:
+        import resource
+
+        value = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+        return int(value * (1024 if sys.platform != "darwin" else 1))
+    except (ImportError, AttributeError):
+        return None
 
 
 def percentile(values: list[float], fraction: float) -> float:
@@ -46,6 +93,10 @@ def run_benchmark(database: str, count: int, dimensions: int, queries: int, top_
             )
         )
 
+    sqlite_bytes = database_path.stat().st_size
+    vector_bytes = count * dimensions * 4
+    rss_before_hnsw = process_rss_bytes()
+
     exact_times: list[float] = []
     exact_results = []
     for query in query_vectors:
@@ -68,6 +119,12 @@ def run_benchmark(database: str, count: int, dimensions: int, queries: int, top_
         model="benchmark-embedder",
     )
     hnsw_build_query_ms = (time.perf_counter() - started) * 1000
+    rss_after_hnsw = process_rss_bytes()
+    hnsw_rss_delta_mb = (
+        (rss_after_hnsw - rss_before_hnsw) / (1024 * 1024)
+        if rss_before_hnsw is not None and rss_after_hnsw is not None
+        else None
+    )
 
     hnsw_times: list[float] = []
     hnsw_results = []
@@ -92,11 +149,17 @@ def run_benchmark(database: str, count: int, dimensions: int, queries: int, top_
     print("Retrieval benchmark")
     print(f"Database: {database}")
     print(f"Memories: {count:,} | Dimensions: {dimensions} | Queries: {queries} | Top-k: {top_k}")
+    print(f"SQLite file size: {sqlite_bytes / (1024 * 1024):.3f} MB")
+    print(f"Raw vector payload: {vector_bytes / (1024 * 1024):.3f} MB")
     print(f"Exact p50/p95: {percentile(exact_times, 0.50):.3f} / {percentile(exact_times, 0.95):.3f} ms")
     print(
         f"HNSW build + first query: {hnsw_build_query_ms:.3f} ms | "
         f"warm p50/p95: {percentile(hnsw_times, 0.50):.3f} / "
         f"{percentile(hnsw_times, 0.95):.3f} ms"
+    )
+    print(
+        "HNSW process RSS increase during first build: "
+        + (f"{hnsw_rss_delta_mb:.3f} MB" if hnsw_rss_delta_mb is not None else "unavailable")
     )
     print(f"HNSW recall of exact top-{top_k}: {statistics.mean(recall):.1%}")
 

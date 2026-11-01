@@ -69,6 +69,48 @@ pub enum HnswError {
     Store(#[from] StoreError),
 }
 
+/// Common result type for interchangeable exact and approximate indexes.
+#[derive(Debug, Error)]
+pub enum IndexError {
+    #[error("exact index error: {0}")]
+    Exact(#[from] SearchError),
+    #[error("HNSW index error: {0}")]
+    Hnsw(#[from] HnswError),
+}
+
+/// Small common interface used to compare index implementations.
+///
+/// The exact implementation remains the correctness oracle. HNSW implements
+/// the same minimal query shape so benchmark and evaluation code can compare
+/// them without depending on their internal data structures.
+pub trait VectorIndex {
+    fn search(&self, query: &[f32], top_k: usize) -> Result<Vec<SearchHit>, IndexError>;
+}
+
+/// Exact index adapter over the SQLite source of truth.
+pub struct ExactIndex<'a> {
+    store: &'a MemoryStore,
+}
+
+impl<'a> ExactIndex<'a> {
+    pub fn new(store: &'a MemoryStore) -> Self {
+        Self { store }
+    }
+}
+
+impl VectorIndex for ExactIndex<'_> {
+    fn search(&self, query: &[f32], top_k: usize) -> Result<Vec<SearchHit>, IndexError> {
+        Ok(search_with_options(
+            self.store,
+            query,
+            SearchOptions {
+                top_k,
+                ..SearchOptions::default()
+            },
+        )?)
+    }
+}
+
 /// Calculate cosine similarity between two embeddings.
 pub fn cosine_similarity(query: &[f32], memory: &[f32]) -> Result<f32, SearchError> {
     if query.is_empty() {
@@ -296,6 +338,12 @@ impl HnswIndex {
     }
 }
 
+impl VectorIndex for HnswIndex {
+    fn search(&self, query: &[f32], top_k: usize) -> Result<Vec<SearchHit>, IndexError> {
+        Ok(self.search(query, top_k, 64)?)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -441,5 +489,18 @@ mod tests {
         assert_eq!(index.len(), 2);
         assert_eq!(hits[0].memory.id.as_str(), "near");
         assert!(hits[0].score > hits[1].score);
+    }
+
+    #[test]
+    fn exact_and_hnsw_share_a_comparable_index_interface() {
+        let store = MemoryStore::in_memory().unwrap();
+        store.insert(&memory("near", vec![1.0, 0.0])).unwrap();
+        store.insert(&memory("far", vec![0.0, 1.0])).unwrap();
+
+        let exact = ExactIndex::new(&store).search(&[1.0, 0.0], 2).unwrap();
+        let hnsw_index = HnswIndex::build_from_store(&store).unwrap();
+        let hnsw = VectorIndex::search(&hnsw_index, &[1.0, 0.0], 2).unwrap();
+
+        assert_eq!(exact[0].memory.id, hnsw[0].memory.id);
     }
 }
