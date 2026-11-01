@@ -1,154 +1,210 @@
+<div align="center">
+
 # Local AI Vector Memory Engine
 
-> A polyglot AI memory platform with a Rust retrieval core and Python-first application workflows.
+### A Python-first AI memory workflow with a Rust-native storage and retrieval core.
 
-**Local AI Vector Memory Engine** is a learning-focused AI systems project inspired by the ideas explored in RuVector. It combines a Rust-native memory and retrieval core with Python embeddings, RAG orchestration, model integration, and evaluation workflows.
+<p>
+  <a href="https://prakyathmc.github.io/local-ai-vector-memory-engine/explorer/">Interactive Explorer</a>
+  ·
+  <a href="#quick-start">Quick start</a>
+  ·
+  <a href="#architecture">Architecture</a>
+  ·
+  <a href="#roadmap">Roadmap</a>
+</p>
 
-The project is currently in the **research and architecture phase**. The capabilities described below are the target design, not claims that every feature has already been implemented.
+<img src="https://img.shields.io/badge/status-learning--build-7c3aed?style=for-the-badge" alt="Project status">
+<img src="https://img.shields.io/badge/Rust-native--core-d97706?style=for-the-badge&logo=rust&logoColor=white" alt="Rust native core">
+<img src="https://img.shields.io/badge/Python-AI--workflow-3776ab?style=for-the-badge&logo=python&logoColor=white" alt="Python AI workflow">
+<img src="https://img.shields.io/badge/SQLite-local--persistence-003b57?style=for-the-badge&logo=sqlite&logoColor=white" alt="SQLite">
 
-## What we are building
+<br>
 
-The engine will combine:
+**Understandable AI infrastructure for local semantic memory, retrieval, and experimentation.**
 
-| Capability | Purpose |
-| :--- | :--- |
-| **Semantic memory** | Store embeddings and retrieve relevant memories by meaning |
-| **Persistent vector search** | Preserve searchable knowledge across process restarts |
-| **Metadata filtering** | Restrict retrieval by source, type, time, user, or namespace |
-| **Graph context** | Represent relationships between memories, entities, and concepts |
-| **Feedback learning** | Improve ranking from explicit corrections and outcomes |
-| **Memory lifecycle** | Admit, rank, update, decay, archive, and delete memories |
-| **Shared memory** | Optionally support multiple agents or isolated namespaces |
-| **Interactive observability** | Visualize storage, retrieval paths, graph links, and memory changes |
+</div>
 
-The goal is not to reproduce every component in a large AI ecosystem. The goal is to understand the important mechanisms deeply and build a coherent system that can be extended without becoming impossible to reason about.
+## What this is
 
-## The central loop
+Local AI Vector Memory Engine is a learning-focused project inspired by the ideas explored in [RuVector](https://github.com/ruvnet/RuVector). It is not a copy of the full RuVector ecosystem. It is a smaller system built to understand the important mechanisms directly:
+
+```text
+documents → chunks → local embeddings → SQLite memory records
+                                      ↓
+query → exact search or HNSW ANN → ranked evidence
+                                      ↓
+                         inspection, evaluation, and RAG context
+```
+
+The project intentionally separates AI experimentation in Python from performance-sensitive storage and retrieval in Rust.
+
+## Current capabilities
+
+| Capability | Current implementation |
+| --- | --- |
+| Persistent memory | SQLite-backed Rust store with restart-safe records |
+| Embeddings | Local `BAAI/bge-small-en-v1.5`, 384 dimensions |
+| Ingestion | Python document loading, deterministic word chunking, overlap, and re-ingestion |
+| Exact retrieval | Rust cosine similarity baseline with deterministic ranking |
+| ANN retrieval | Rust HNSW index through `hnsw_rs` |
+| HNSW lifecycle | Per-namespace lazy cache with invalidation after writes |
+| Filtering | Namespace, source, type, status, and creation-time filters on exact search |
+| Provenance | Source, model, dimensions, metadata, and timestamps stored with each memory |
+| Inspection | Streamlit dashboard, memory explorer, embedding projection, and HNSW Observatory |
+| Evaluation | Labeled retrieval fixture plus exact-vs-HNSW comparison and synthetic benchmark |
+
+Advanced graph relationships, feedback learning, multi-agent shared memory, and generation adapters are intentionally future work. They are not presented as implemented features.
+
+## See it visually
+
+### Interactive Explorer
+
+Open the [Local AI Memory Explorer](https://prakyathmc.github.io/local-ai-vector-memory-engine/explorer/) to explore the memory flow, exact search path, HNSW path, index layers, and ranked results in the browser.
+
+The Explorer is a lightweight static visualization of the current architecture. The live local database inspector is the Streamlit application described below.
+
+### Local Streamlit inspector
+
+The local UI lets you ingest text, inspect chunks and embeddings, compare exact retrieval with HNSW, and observe the first-query index-build cost versus warm-query latency.
+
+```cmd
+cd /d D:\REA
+.venv\Scripts\streamlit.exe run python\app.py
+```
+
+Then open `http://localhost:8501` and select **HNSW observatory**.
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    A[Observation or document] --> B[Embedding]
-    B --> C[Memory admission]
-    C --> D[(Persistent vector store)]
-    D <--> E[Graph relationships]
-    Q[Query or agent task] --> F[Retrieve candidates]
-    D --> F
-    E --> F
-    F --> G[Filter and rerank]
-    G --> H[Context for decision]
-    H --> I[Action or response]
-    I --> J[Explicit feedback and outcome]
-    J --> K[Learning and lifecycle update]
-    K --> D
+    A[Document or text] --> B[Python chunking]
+    B --> C[Local BGE embedding]
+    C --> D[PyO3 / maturin bridge]
+    D --> E[(SQLite memory store)]
+
+    Q[Natural-language query] --> C2[Same embedding model]
+    C2 --> R{Retrieval mode}
+    R --> X[Exact cosine baseline]
+    R --> H[Cached HNSW ANN index]
+    E --> X
+    E --> H
+    X --> O[Ranked evidence]
+    H --> O
+    O --> U[Streamlit inspector]
+    O --> V[Evaluation and RAG context]
 ```
 
-Every important decision should eventually be inspectable: what was stored, why it was retrieved, which relationships influenced the result, and how feedback changed future behavior.
+### Why both exact and HNSW?
+
+Exact search checks every eligible vector. It is easy to understand and acts as the correctness oracle.
+
+HNSW builds a navigable graph over vectors. It usually costs more during index construction, but can reduce warm-query work as the collection grows. We compare HNSW against exact search instead of silently assuming it is correct.
+
+On the current synthetic 1,000-vector benchmark:
+
+| Measurement | Result |
+| --- | ---: |
+| Exact p50 query latency | 15.166 ms |
+| HNSW build + first query | 2471.426 ms |
+| HNSW warm p50 query latency | 1.618 ms |
+| HNSW recall of exact top-10 | 100% |
+
+These are workload-specific learning measurements, not production performance claims.
+
+## Quick start
+
+### 1. Create the environment
+
+```cmd
+cd /d D:\REA
+py -3.14 -m venv .venv
+.venv\Scripts\activate
+.venv\Scripts\python.exe -m pip install -r requirements.txt
+```
+
+### 2. Download the local embedding model
+
+```cmd
+.venv\Scripts\python.exe python\download_embedding_model.py
+```
+
+The model is stored locally under `models/` and is ignored by Git.
+
+### 3. Build the Python extension
+
+```cmd
+cd /d D:\REA\python\local_ai_memory
+..\..\.venv\Scripts\maturin.exe develop --release
+cd /d D:\REA
+```
+
+### 4. Run the tests
+
+```cmd
+.venv\Scripts\python.exe -m pytest python\tests -q
+set PYO3_PYTHON=D:\REA\.venv\Scripts\python.exe
+cargo test --workspace
+```
+
+### 5. Run evaluation and benchmarking
+
+```cmd
+.venv\Scripts\python.exe python\evaluate_retrieval.py
+.venv\Scripts\python.exe python\benchmark_retrieval.py
+```
+
+## Project layout
+
+```text
+crates/
+├── memory-core/        Domain types and validation
+├── memory-store/       SQLite schema, persistence, and lifecycle
+├── memory-retrieval/   Cosine baseline and HNSW ANN index
+└── memory-python/      PyO3 bindings exposed as local_ai_memory
+
+python/
+├── app.py              Streamlit observability UI
+├── embedding.py        Local and deterministic embedding providers
+├── ingest_documents.py Chunking and ingestion workflow
+├── evaluate_retrieval.py
+├── benchmark_retrieval.py
+└── tests/
+
+explorer/
+└── index.html           GitHub Pages interactive architecture explorer
+```
 
 ## Design principles
 
-- **Local first:** keep the core useful without requiring a hosted service.
-- **Evidence over claims:** support conclusions with tests, measurements, and reproducible experiments.
-- **Understandable components:** prefer clear boundaries over accidental complexity.
-- **Explicit learning:** retrieval alone does not equal learning; adaptation must come from recorded feedback or outcomes.
-- **Safe memory:** support provenance, namespaces, deletion, and isolation from the beginning.
-- **Observable behavior:** expose enough internal information to explain retrieval and memory decisions.
-- **Incremental scope:** start with a reliable core and add advanced algorithms only when their value is demonstrated.
+- **Learn before abstracting:** every major mechanism has a simple baseline first.
+- **Exact search is the oracle:** ANN results are measured against exact retrieval.
+- **Python for AI workflows:** models, chunking, evaluation, and future RAG orchestration stay easy to experiment with.
+- **Rust for the substrate:** validated records, transactions, vector math, and indexes live behind a stable native boundary.
+- **SQLite is the source of truth:** HNSW is a derived, rebuildable acceleration structure.
+- **Inspectability over magic:** IDs, scores, metadata, provenance, filters, and lifecycle state are visible.
+- **Verified claims only:** planned RuVector-inspired features are clearly separated from implemented behavior.
 
-## Planned architecture
+## Roadmap
 
-```text
-Applications, agents, CLI, and language integrations
-                         │
-                  Query and memory API
-                         │
-          ┌──────────────┴──────────────┐
-          │                             │
-   Vector retrieval              Memory and graph services
-   exact / ANN / reranking       lifecycle / relationships
-          │                             │
-          └──────────────┬──────────────┘
-                         │
-       Persistent storage, indexes, provenance, namespaces
-                         │
-              Evaluation and visualization
-```
+- [x] Persistent memory registry and model-card validation
+- [x] Local embedding and deterministic chunk ingestion
+- [x] Exact cosine retrieval with filters
+- [x] HNSW ANN retrieval and cache invalidation
+- [x] Exact-vs-HNSW evaluation and benchmark tooling
+- [x] Streamlit HNSW Observatory
+- [x] Interactive architecture/index Explorer
+- [ ] Feedback recording and ranking experiments
+- [ ] RAG context package API
+- [ ] Query traces backed by real engine events
+- [ ] Optional graph relationships and graph-aware retrieval
+- [ ] Version 1 hardening and release checklist
 
-The visualization layer is not a decorative mockup. It will be connected to real engine events and will help explain query paths, candidate selection, graph traversal, feedback, and memory evolution.
+## Learning goal
 
-## Development roadmap
-
-### Phase 1 — Understand and define
-
-- Audit the relevant RuVector source code and tests.
-- Separate foundational components from optional, experimental, and unrelated packages.
-- Define the minimum target architecture and data model.
-
-### Phase 2 — Build the retrieval core
-
-- Implement vector records, collections, and metadata.
-- Add exact search as a correctness baseline.
-- Add persistence and restart/reopen tests.
-- Measure recall, latency, and storage behavior.
-
-### Phase 3 — Make memory useful
-
-- Add memory admission and lifecycle policies.
-- Add filtering, namespaces, provenance, and deletion.
-- Add a first agent-memory workflow across multiple sessions.
-
-### Phase 4 — Add structure and learning
-
-- Introduce graph relationships where they improve retrieval.
-- Record explicit feedback and outcomes.
-- Compare baseline ranking against feedback-aware ranking.
-
-### Phase 5 — Expose and visualize
-
-- Build a clean CLI and application API.
-- Add optional language bindings.
-- Create an interactive explorer backed by real query traces and memory data.
-
-### Phase 6 — Evaluate and refine
-
-- Add reproducible datasets and benchmarks.
-- Test correctness, isolation, failure recovery, and concurrency.
-- Document what works, what does not, and what should remain out of scope.
-
-## Current status
-
-| Area | Status |
-| :--- | :--- |
-| Project direction | Defined |
-| RuVector source audit | In progress |
-| Target architecture | Draft |
-| Core implementation | Not started |
-| Interactive explorer | Planned |
-| Benchmarks | Planned |
-
-The first implementation will be deliberately smaller than RuVector. Features will be promoted into the core only when their behavior, value, and testing strategy are understood.
-
-## Why this project exists
-
-This is a hands-on AI engineering project for learning how modern AI memory systems work below the application layer:
-
-- embeddings and similarity search
-- indexing and persistence
-- retrieval quality and reranking
-- graph-assisted context
-- feedback-driven adaptation
-- agent memory design
-- performance measurement and systems trade-offs
-
-The final result should be more than a demo. It should be a documented, measurable, and explainable AI substrate that can support personal agents and future experiments.
-
-## Non-goals for the first version
-
-- Reimplementing all RuVector packages.
-- Claiming production readiness before testing it.
-- Adding advanced algorithms only because they sound impressive.
-- Hiding retrieval behavior behind an unexplained black box.
-- Running a large distributed service before the local core is reliable.
+This project is a hands-on study of AI engineering below the chatbot layer: embeddings, vector storage, ANN indexing, retrieval quality, lifecycle controls, provenance, and the systems trade-offs behind local agent memory.
 
 ## License
 
-The license and attribution model will be finalized before substantial code is published. Any reused code or design must retain its original license and attribution requirements.
+MIT. See [LICENSE](LICENSE).
