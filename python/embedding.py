@@ -4,9 +4,6 @@ import hashlib
 from pathlib import Path
 from typing import Protocol, Sequence
 
-from sentence_transformers import SentenceTransformer
-
-
 class EmbeddingProvider(Protocol):
     """The small interface ingestion needs from any embedding model."""
 
@@ -29,6 +26,8 @@ class SentenceTransformerProvider:
         model_dir: Path,
         dimensions: int,
     ) -> None:
+        from sentence_transformers import SentenceTransformer
+
         self.model_name = model_name
         self.dimensions = dimensions
         self._model = SentenceTransformer(

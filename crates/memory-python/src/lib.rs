@@ -91,6 +91,31 @@ impl Memory {
     }
 
     #[getter]
+    fn embedding(&self) -> Vec<f32> {
+        self.record.embedding.clone()
+    }
+
+    #[getter]
+    fn metadata(&self) -> BTreeMap<String, String> {
+        self.record.metadata.clone()
+    }
+
+    #[getter]
+    fn created_at_ms(&self) -> u64 {
+        self.record.created_at_ms
+    }
+
+    #[getter]
+    fn updated_at_ms(&self) -> u64 {
+        self.record.updated_at_ms
+    }
+
+    #[getter]
+    fn normalized(&self) -> bool {
+        self.record.embedding_provenance.normalized
+    }
+
+    #[getter]
     fn embedding_model(&self) -> &str {
         &self.record.embedding_provenance.model
     }
@@ -189,6 +214,13 @@ impl Store {
             .delete(&id)
             .map_err(|error| PyValueError::new_err(error.to_string()))
     }
+
+    fn restore(&self, id: String) -> PyResult<()> {
+        let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.inner
+            .restore(&id)
+            .map_err(|error| PyValueError::new_err(error.to_string()))
+    }
 }
 
 #[pyclass]
@@ -201,6 +233,16 @@ pub struct SearchResult {
     pub score: f32,
     #[pyo3(get)]
     pub namespace: String,
+    #[pyo3(get)]
+    pub source: Option<String>,
+    #[pyo3(get)]
+    pub status: String,
+    #[pyo3(get)]
+    pub embedding_model: String,
+    #[pyo3(get)]
+    pub dimensions: usize,
+    #[pyo3(get)]
+    pub metadata: BTreeMap<String, String>,
 }
 
 impl SearchResult {
@@ -210,6 +252,15 @@ impl SearchResult {
             content: hit.memory.content,
             score: hit.score,
             namespace: hit.memory.namespace,
+            source: hit.memory.source,
+            status: match hit.memory.status {
+                MemoryStatus::Active => "active".into(),
+                MemoryStatus::Archived => "archived".into(),
+                MemoryStatus::Deleted => "deleted".into(),
+            },
+            embedding_model: hit.memory.embedding_provenance.model,
+            dimensions: hit.memory.embedding_provenance.dimensions,
+            metadata: hit.memory.metadata,
         }
     }
 }
