@@ -3,10 +3,11 @@
 //! This module intentionally exposes only a small validated object. Storage,
 //! embeddings, and retrieval will be added in later sprints.
 
-use std::collections::BTreeMap;
+use std::cell::RefCell;
+use std::collections::{BTreeMap, HashMap};
 
 use memory_core::{EmbeddingProvenance, MemoryId, MemoryRecord, MemoryStatus, MemoryType};
-use memory_retrieval::{SearchOptions, search_with_options};
+use memory_retrieval::{HnswIndex, SearchOptions, search_with_options};
 use memory_store::MemoryStore;
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
@@ -178,6 +179,7 @@ impl Memory {
 #[pyclass(name = "MemoryStore", unsendable)]
 pub struct Store {
     inner: MemoryStore,
+    hnsw_indices: RefCell<HashMap<Option<String>, HnswIndex>>,
 }
 
 #[pymethods]
@@ -186,13 +188,18 @@ impl Store {
     fn new(path: String) -> PyResult<Self> {
         let inner =
             MemoryStore::open(path).map_err(|error| PyValueError::new_err(error.to_string()))?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            hnsw_indices: RefCell::new(HashMap::new()),
+        })
     }
 
     fn insert(&self, memory: PyRef<'_, Memory>) -> PyResult<()> {
         self.inner
             .insert(&memory.record)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.hnsw_indices.borrow_mut().clear();
+        Ok(())
     }
 
     fn get(&self, id: String) -> PyResult<Option<Memory>> {
@@ -240,31 +247,94 @@ impl Store {
         Ok(hits.into_iter().map(SearchResult::from_hit).collect())
     }
 
+    /// Search a cached HNSW snapshot of active memories.
+    ///
+    /// SQLite remains the source of truth. Successful writes invalidate all
+    /// cached namespace snapshots; the next HNSW query rebuilds lazily.
+    #[pyo3(signature = (query, top_k=5, ef_search=64, namespace=None, model=None))]
+    fn search_hnsw(
+        &self,
+        query: Vec<f32>,
+        top_k: usize,
+        ef_search: usize,
+        namespace: Option<String>,
+        model: Option<String>,
+    ) -> PyResult<Vec<SearchResult>> {
+        if let Some((expected_model, expected_dimensions)) = self
+            .inner
+            .embedding_configuration()
+            .map_err(|error| PyValueError::new_err(error.to_string()))?
+        {
+            if query.len() != expected_dimensions {
+                return Err(PyValueError::new_err(format!(
+                    "query embedding dimensions do not match the database: expected {}, received {}",
+                    expected_dimensions,
+                    query.len()
+                )));
+            }
+            if let Some(actual_model) = model.as_deref() {
+                if actual_model != expected_model {
+                    return Err(PyValueError::new_err(format!(
+                        "query embedding model does not match the database: expected {}, received {}",
+                        expected_model, actual_model
+                    )));
+                }
+            }
+        }
+
+        let cache_key = namespace.clone();
+        let mut indices = self.hnsw_indices.borrow_mut();
+        if !indices.contains_key(&cache_key) {
+            let records = self
+                .inner
+                .list(namespace.as_deref())
+                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            let index = HnswIndex::build(&records)
+                .map_err(|error| PyValueError::new_err(error.to_string()))?;
+            indices.insert(cache_key.clone(), index);
+        }
+        let index = indices
+            .get(&cache_key)
+            .expect("HNSW index was inserted above");
+        let hits = index
+            .search(&query, top_k, ef_search)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        Ok(hits.into_iter().map(SearchResult::from_hit).collect())
+    }
+
     fn update(&self, memory: PyRef<'_, Memory>) -> PyResult<()> {
         self.inner
             .update(&memory.record)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.hnsw_indices.borrow_mut().clear();
+        Ok(())
     }
 
     fn archive(&self, id: String) -> PyResult<()> {
         let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
         self.inner
             .archive(&id)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.hnsw_indices.borrow_mut().clear();
+        Ok(())
     }
 
     fn delete(&self, id: String) -> PyResult<()> {
         let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
         self.inner
             .delete(&id)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.hnsw_indices.borrow_mut().clear();
+        Ok(())
     }
 
     fn restore(&self, id: String) -> PyResult<()> {
         let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
         self.inner
             .restore(&id)
-            .map_err(|error| PyValueError::new_err(error.to_string()))
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.hnsw_indices.borrow_mut().clear();
+        Ok(())
     }
 }
 

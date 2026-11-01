@@ -4,6 +4,7 @@
 //! compared with the query. It is easy to understand and gives us a trusted
 //! result before we introduce an approximate index such as HNSW.
 
+use hnsw_rs::prelude::{DistCosine, Hnsw};
 use memory_core::{MemoryRecord, MemoryStatus, MemoryType};
 use memory_store::{MemoryStore, StoreError};
 use thiserror::Error;
@@ -26,6 +27,16 @@ pub struct SearchOptions {
     pub query_model: Option<String>,
 }
 
+/// An in-memory HNSW index over a snapshot of active memory records.
+///
+/// SQLite remains the source of truth. This index is a derived acceleration
+/// structure and must be rebuilt after records change in this first version.
+pub struct HnswIndex {
+    index: Hnsw<'static, f32, DistCosine>,
+    memories: Vec<MemoryRecord>,
+    dimensions: usize,
+}
+
 #[derive(Debug, Error)]
 pub enum SearchError {
     #[error("query embedding cannot be empty")]
@@ -42,6 +53,18 @@ pub enum SearchError {
         "query embedding model does not match the database: expected {expected}, received {actual}"
     )]
     QueryModelMismatch { expected: String, actual: String },
+    #[error("memory store error: {0}")]
+    Store(#[from] StoreError),
+}
+
+#[derive(Debug, Error)]
+pub enum HnswError {
+    #[error("query embedding cannot be empty")]
+    EmptyQuery,
+    #[error("query and index embeddings have different dimensions: {query} vs {index}")]
+    DimensionMismatch { query: usize, index: usize },
+    #[error("query embedding cannot be all zeros")]
+    ZeroQuery,
     #[error("memory store error: {0}")]
     Store(#[from] StoreError),
 }
@@ -171,6 +194,106 @@ pub fn search_with_options(
     });
     hits.truncate(options.top_k);
     Ok(hits)
+}
+
+impl HnswIndex {
+    pub fn build(records: &[MemoryRecord]) -> Result<Self, HnswError> {
+        let memories: Vec<MemoryRecord> = records
+            .iter()
+            .filter(|record| record.status == MemoryStatus::Active)
+            .cloned()
+            .collect();
+        let dimensions = memories
+            .first()
+            .map(|memory| memory.embedding.len())
+            .unwrap_or(0);
+
+        for memory in &memories {
+            if memory.embedding.len() != dimensions {
+                return Err(HnswError::DimensionMismatch {
+                    query: memory.embedding.len(),
+                    index: dimensions,
+                });
+            }
+        }
+
+        let index = Hnsw::new(16, memories.len().max(1), 16, 200, DistCosine {});
+        for (index_id, memory) in memories.iter().enumerate() {
+            index.insert((&memory.embedding, index_id));
+        }
+
+        Ok(Self {
+            index,
+            memories,
+            dimensions,
+        })
+    }
+
+    pub fn build_from_store(store: &MemoryStore) -> Result<Self, HnswError> {
+        Ok(Self::build(&store.list(None)?)?)
+    }
+
+    pub fn len(&self) -> usize {
+        self.memories.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.memories.is_empty()
+    }
+
+    /// Search the snapshot. `ef_search` controls the accuracy/speed trade-off.
+    pub fn search(
+        &self,
+        query: &[f32],
+        top_k: usize,
+        ef_search: usize,
+    ) -> Result<Vec<SearchHit>, HnswError> {
+        if query.is_empty() {
+            return Err(HnswError::EmptyQuery);
+        }
+        if self.is_empty() || top_k == 0 {
+            return Ok(Vec::new());
+        }
+        if query.len() != self.dimensions {
+            return Err(HnswError::DimensionMismatch {
+                query: query.len(),
+                index: self.dimensions,
+            });
+        }
+
+        let norm = query
+            .iter()
+            .map(|value| f64::from(*value) * f64::from(*value))
+            .sum::<f64>();
+        if norm == 0.0 {
+            return Err(HnswError::ZeroQuery);
+        }
+
+        let neighbours =
+            self.index
+                .search(query, top_k.min(self.memories.len()), ef_search.max(top_k));
+        let mut hits = neighbours
+            .into_iter()
+            .filter_map(|neighbour| {
+                self.memories
+                    .get(neighbour.d_id)
+                    .cloned()
+                    .map(|memory| SearchHit {
+                        memory,
+                        score: 1.0 - neighbour.distance,
+                    })
+            })
+            .collect::<Vec<_>>();
+
+        hits.sort_by(|left, right| {
+            right
+                .score
+                .total_cmp(&left.score)
+                .then_with(|| left.memory.id.as_str().cmp(right.memory.id.as_str()))
+        });
+        hits.truncate(top_k);
+        Ok(hits)
+    }
 }
 
 #[cfg(test)]
@@ -304,5 +427,19 @@ mod tests {
             ),
             Err(SearchError::QueryModelMismatch { .. })
         ));
+    }
+
+    #[test]
+    fn hnsw_returns_the_nearest_active_memory() {
+        let records = vec![
+            memory("near", vec![1.0, 0.0]),
+            memory("far", vec![0.0, 1.0]),
+        ];
+        let index = HnswIndex::build(&records).unwrap();
+        let hits = index.search(&[1.0, 0.0], 2, 32).unwrap();
+
+        assert_eq!(index.len(), 2);
+        assert_eq!(hits[0].memory.id.as_str(), "near");
+        assert!(hits[0].score > hits[1].score);
     }
 }

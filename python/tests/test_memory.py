@@ -122,6 +122,35 @@ def test_python_can_search_active_memories_by_similarity():
             database.unlink()
 
 
+def test_python_can_search_active_memories_with_hnsw():
+    database = Path(__file__).parents[2] / "data/python-hnsw-test.db"
+    if database.exists():
+        database.unlink()
+
+    store = None
+    try:
+        store = MemoryStore(str(database))
+        store.insert(Memory("near", "Nearest memory", [1.0, 0.0]))
+        store.insert(Memory("far", "Other direction", [0.0, 1.0]))
+        store.insert(Memory("other-namespace", "Different namespace", [1.0, 0.0], namespace="other"))
+
+        results = store.search_hnsw(
+            [1.0, 0.0],
+            top_k=2,
+            ef_search=32,
+            namespace="default",
+            model="test-embedder",
+        )
+
+        assert [result.id for result in results] == ["near", "far"]
+        assert results[0].score > results[1].score
+    finally:
+        del store
+        gc.collect()
+        if database.exists():
+            database.unlink()
+
+
 def test_chunking_is_deterministic_and_ingestion_records_boundaries():
     chunks = chunk_text("one two three four five six", chunk_size=4, overlap=1)
     assert chunks == [

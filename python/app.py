@@ -3,6 +3,7 @@
 import json
 import sqlite3
 import sys
+import time
 from pathlib import Path
 
 import numpy as np
@@ -235,6 +236,20 @@ def search_view(path: Path) -> None:
     st.header("Search playground")
     query = st.text_area("Natural-language query", placeholder="How does this project store memories?")
     top_k = st.slider("Results", min_value=1, max_value=20, value=5)
+    search_mode = st.selectbox(
+        "Search mode",
+        ["Exact baseline", "HNSW (ANN)"],
+        help="Exact search checks every matching memory. HNSW searches an in-memory approximate index.",
+    )
+    ef_search = st.slider(
+        "HNSW ef_search",
+        min_value=8,
+        max_value=256,
+        value=64,
+        step=8,
+        help="Higher values inspect more candidates and usually improve recall at the cost of more work.",
+        disabled=search_mode == "Exact baseline",
+    )
     _, records = read_database(path)
     sources = sorted({str(record["source"]) for record in records if record["source"]})
     namespaces = sorted({str(record["namespace"]) for record in records})
@@ -259,17 +274,43 @@ def search_view(path: Path) -> None:
         try:
             provider = get_provider()
             vector = provider.embed([query])[0]
-            results = load_store(path).search(
-                vector,
-                top_k=top_k,
-                namespace=None if namespace_filter == "Any" else namespace_filter,
-                source=None if source_filter == "Any" else source_filter,
-                memory_type=None if type_filter == "Any" else type_filter,
-                status=status_filter,
-                min_created_at_ms=None if min_time == 0 else int(min_time),
-                max_created_at_ms=None if max_time == 0 else int(max_time),
-                model=provider.model_name,
-            )
+            store = load_store(path)
+            namespace = None if namespace_filter == "Any" else namespace_filter
+            if search_mode == "HNSW (ANN)":
+                unsupported_filters = []
+                if source_filter != "Any":
+                    unsupported_filters.append("source")
+                if type_filter != "Any":
+                    unsupported_filters.append("memory type")
+                if status_filter != "active":
+                    unsupported_filters.append("status")
+                if min_time != 0 or max_time != 0:
+                    unsupported_filters.append("created time")
+                if unsupported_filters:
+                    st.warning(
+                        "HNSW v1 supports only namespace filtering. Use Exact baseline for: "
+                        + ", ".join(unsupported_filters)
+                    )
+                    return
+                results = store.search_hnsw(
+                    vector,
+                    top_k=top_k,
+                    ef_search=ef_search,
+                    namespace=namespace,
+                    model=provider.model_name,
+                )
+            else:
+                results = store.search(
+                    vector,
+                    top_k=top_k,
+                    namespace=namespace,
+                    source=None if source_filter == "Any" else source_filter,
+                    memory_type=None if type_filter == "Any" else type_filter,
+                    status=status_filter,
+                    min_created_at_ms=None if min_time == 0 else int(min_time),
+                    max_created_at_ms=None if max_time == 0 else int(max_time),
+                    model=provider.model_name,
+                )
         except ValueError as error:
             st.error(str(error))
             return
@@ -287,6 +328,162 @@ def search_view(path: Path) -> None:
                 )
                 if result.metadata:
                     st.json(result.metadata)
+
+
+def hnsw_observatory(path: Path) -> None:
+    st.header("HNSW observatory")
+    st.write(
+        "Run the same query through exact cosine search and the cached HNSW index, "
+        "then inspect latency, agreement, and a 2D projection of the full embeddings."
+    )
+    st.info(
+        "The projection is only a visual aid. Retrieval and HNSW still operate on the full "
+        "384-dimensional vectors. The first HNSW query includes index construction; the "
+        "second query demonstrates warm-cache behavior."
+    )
+
+    _, records = read_database(path)
+    active_records = [record for record in records if record["status"] == "active"]
+    namespaces = sorted({str(record["namespace"]) for record in active_records})
+    query = st.text_area(
+        "Query to inspect",
+        value="How does the project retrieve relevant memories?",
+        key="hnsw_observatory_query",
+    )
+    controls = st.columns(3)
+    with controls[0]:
+        namespace_filter = st.selectbox("Namespace", ["Any"] + namespaces, key="hnsw_namespace")
+    with controls[1]:
+        top_k = st.slider("Top-k", 1, 20, 5, key="hnsw_top_k")
+    with controls[2]:
+        ef_search = st.slider("ef_search", 8, 256, 64, step=8, key="hnsw_ef")
+
+    if not st.button("Run exact + HNSW comparison", type="primary") or not query.strip():
+        return
+    if not active_records:
+        st.warning("No active memories are available. Ingest some text first.")
+        return
+
+    try:
+        provider = get_provider()
+        vector = provider.embed([query])[0]
+        store = load_store(path)
+        namespace = None if namespace_filter == "Any" else namespace_filter
+
+        exact_started = time.perf_counter()
+        exact_results = store.search(
+            vector,
+            top_k=top_k,
+            namespace=namespace,
+            status="active",
+            model=provider.model_name,
+        )
+        exact_ms = (time.perf_counter() - exact_started) * 1000
+
+        first_hnsw_started = time.perf_counter()
+        hnsw_results = store.search_hnsw(
+            vector,
+            top_k=top_k,
+            ef_search=ef_search,
+            namespace=namespace,
+            model=provider.model_name,
+        )
+        first_hnsw_ms = (time.perf_counter() - first_hnsw_started) * 1000
+
+        warm_hnsw_started = time.perf_counter()
+        store.search_hnsw(
+            vector,
+            top_k=top_k,
+            ef_search=ef_search,
+            namespace=namespace,
+            model=provider.model_name,
+        )
+        warm_hnsw_ms = (time.perf_counter() - warm_hnsw_started) * 1000
+    except ValueError as error:
+        st.error(str(error))
+        return
+
+    exact_ids = [result.id for result in exact_results]
+    hnsw_ids = [result.id for result in hnsw_results]
+    exact_set = set(exact_ids)
+    hnsw_set = set(hnsw_ids)
+    overlap = exact_set & hnsw_set
+    recall = len(overlap) / len(exact_set) if exact_set else 0.0
+    top1_agreement = bool(exact_ids and hnsw_ids and exact_ids[0] == hnsw_ids[0])
+
+    st.subheader("What happened")
+    metrics = st.columns(5)
+    metrics[0].metric("Exact latency", f"{exact_ms:.2f} ms")
+    metrics[1].metric("HNSW first query", f"{first_hnsw_ms:.2f} ms")
+    metrics[2].metric("HNSW warm query", f"{warm_hnsw_ms:.2f} ms")
+    metrics[3].metric(f"Top-{top_k} overlap", f"{recall:.0%}")
+    metrics[4].metric("Top-1 agreement", "Yes" if top1_agreement else "No")
+
+    comparison_rows = []
+    for rank, result in enumerate(exact_results, start=1):
+        comparison_rows.append(
+            {
+                "Exact rank": rank,
+                "Exact ID": result.id,
+                "Exact score": round(result.score, 4),
+                "HNSW rank": hnsw_ids.index(result.id) + 1 if result.id in hnsw_ids else None,
+                "HNSW score": round(next((hit.score for hit in hnsw_results if hit.id == result.id), 0.0), 4),
+                "Agreement": "both" if result.id in hnsw_set else "exact only",
+            }
+        )
+    for rank, result in enumerate(hnsw_results, start=1):
+        if result.id not in exact_set:
+            comparison_rows.append(
+                {
+                    "Exact rank": None,
+                    "Exact ID": None,
+                    "Exact score": None,
+                    "HNSW rank": rank,
+                    "HNSW score": round(result.score, 4),
+                    "Agreement": "HNSW only",
+                }
+            )
+    st.subheader("Exact versus HNSW results")
+    st.dataframe(pd.DataFrame(comparison_rows), use_container_width=True, hide_index=True)
+
+    projection_memories = [memory for memory in store.list(namespace) if memory.status == "active"][:2000]
+    if len(projection_memories) >= 2:
+        matrix = np.asarray(
+            [memory.embedding for memory in projection_memories],
+            dtype=np.float64,
+        )
+        centered = matrix - matrix.mean(axis=0)
+        _, _, components = np.linalg.svd(centered, full_matrices=False)
+        points = centered @ components[:2].T
+        query_centered = np.asarray(vector, dtype=np.float64) - matrix.mean(axis=0)
+        query_point = query_centered @ components[:2].T
+        exact_set = set(exact_ids)
+        hnsw_set = set(hnsw_ids)
+        projection = pd.DataFrame(
+            {
+                "x": points[:, 0],
+                "y": points[:, 1],
+                "kind": [
+                    "both" if memory.id in (exact_set & hnsw_set)
+                    else "exact only" if memory.id in exact_set
+                    else "HNSW only" if memory.id in hnsw_set
+                    else "other active memory"
+                    for memory in projection_memories
+                ],
+                "id": [memory.id for memory in projection_memories],
+            }
+        )
+        query_row = pd.DataFrame(
+            {"x": [query_point[0]], "y": [query_point[1]], "kind": ["query"], "id": ["QUERY"]}
+        )
+        st.subheader("Embedding space projection")
+        st.caption("PCA projection of active vectors. The query and returned memories are highlighted.")
+        st.scatter_chart(pd.concat([projection, query_row], ignore_index=True), x="x", y="y", color="kind")
+        st.dataframe(
+            projection[projection["kind"] != "other active memory"],
+            use_container_width=True,
+            hide_index=True,
+        )
 
 
 def embedding_view(path: Path) -> None:
@@ -365,6 +562,7 @@ def main() -> None:
             "Memory explorer",
             "Ingest & chunking",
             "Search playground",
+            "HNSW observatory",
             "Embedding inspector",
             "Memory lifecycle",
         ],
@@ -378,6 +576,8 @@ def main() -> None:
         ingestion_view(path)
     elif view == "Search playground":
         search_view(path)
+    elif view == "HNSW observatory":
+        hnsw_observatory(path)
     elif view == "Embedding inspector":
         embedding_view(path)
     else:
