@@ -223,6 +223,16 @@ def ingestion_view(path: Path) -> None:
     )
     chunk_size = st.number_input("Chunk size (words)", min_value=10, value=200, step=10)
     overlap = st.number_input("Overlap (words)", min_value=0, value=40, step=5)
+    admission_columns = st.columns(3)
+    with admission_columns[0]:
+        importance = st.slider("Admission importance", 0.0, 1.0, 0.5, 0.05)
+    with admission_columns[1]:
+        confidence = st.slider("Admission confidence", 0.0, 1.0, 0.5, 0.05)
+    with admission_columns[2]:
+        admission_reason = st.text_input("Admission reason", value="document ingestion")
+    st.caption(
+        "A new chunk is accepted when importance is at least 0.30 or confidence is at least 0.50."
+    )
     text = uploaded.getvalue().decode("utf-8") if uploaded else st.text_area("Or paste text", height=180)
 
     if text:
@@ -249,6 +259,9 @@ def ingestion_view(path: Path) -> None:
                 chunk_size=int(chunk_size),
                 overlap=int(overlap),
                 memory_type=memory_type,
+                importance=importance,
+                confidence=confidence,
+                admission_reason=admission_reason,
             )
             st.success(f"Stored {count} chunks in {path}.")
             st.rerun()

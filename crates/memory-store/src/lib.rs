@@ -56,6 +56,8 @@ VALUES ('distance_metric', 'cosine');
 
 pub const SCHEMA_VERSION: i64 = 2;
 pub const DISTANCE_METRIC: &str = "cosine";
+pub const ADMISSION_IMPORTANCE_THRESHOLD: f32 = 0.3;
+pub const ADMISSION_CONFIDENCE_THRESHOLD: f32 = 0.5;
 
 /// A local persistent memory store.
 pub struct MemoryStore {
@@ -96,6 +98,38 @@ impl MemoryStore {
 
     pub fn insert(&self, record: &MemoryRecord) -> Result<(), StoreError> {
         self.insert_many(std::slice::from_ref(record))
+    }
+
+    /// Apply the first admission policy before persisting a candidate.
+    ///
+    /// A candidate is rejected only when both its expected importance and
+    /// confidence are below the thresholds. This conservative rule avoids
+    /// discarding memories merely because one signal is uncertain.
+    pub fn admit(
+        &self,
+        record: &MemoryRecord,
+        importance: f32,
+        confidence: f32,
+        expires_at_ms: Option<u64>,
+        admission_reason: &str,
+    ) -> Result<bool, StoreError> {
+        validate_unit_value("importance", importance)?;
+        validate_unit_value("confidence", confidence)?;
+        if importance < ADMISSION_IMPORTANCE_THRESHOLD
+            && confidence < ADMISSION_CONFIDENCE_THRESHOLD
+        {
+            return Ok(false);
+        }
+
+        self.insert(record)?;
+        self.set_lifecycle(
+            &record.id,
+            importance,
+            confidence,
+            expires_at_ms,
+            admission_reason,
+        )?;
+        Ok(true)
     }
 
     /// Insert multiple records in one transaction.
@@ -802,7 +836,13 @@ mod tests {
         store.insert(&original).unwrap();
 
         store
-            .set_lifecycle(&original.id, 0.9, 0.8, Some(2_000), "explicit user preference")
+            .set_lifecycle(
+                &original.id,
+                0.9,
+                0.8,
+                Some(2_000),
+                "explicit user preference",
+            )
             .unwrap();
         store.record_feedback(&original.id, true, 1_000).unwrap();
         store.record_feedback(&original.id, false, 1_100).unwrap();

@@ -203,6 +203,31 @@ impl Store {
         Ok(())
     }
 
+    #[pyo3(signature = (memory, importance=0.5, confidence=0.5, expires_at_ms=None, admission_reason="python admission".to_string()))]
+    fn admit(
+        &self,
+        memory: PyRef<'_, Memory>,
+        importance: f32,
+        confidence: f32,
+        expires_at_ms: Option<u64>,
+        admission_reason: String,
+    ) -> PyResult<bool> {
+        let admitted = self
+            .inner
+            .admit(
+                &memory.record,
+                importance,
+                confidence,
+                expires_at_ms,
+                &admission_reason,
+            )
+            .map_err(|error| PyValueError::new_err(error.to_string()))?;
+        if admitted {
+            self.hnsw_indices.borrow_mut().clear();
+        }
+        Ok(admitted)
+    }
+
     fn get(&self, id: String) -> PyResult<Option<Memory>> {
         let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
         let record = self

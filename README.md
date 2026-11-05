@@ -31,7 +31,7 @@
 
 ## What this is
 
-Local AI Vector Memory Engine is a learning-focused project inspired by the ideas explored in [RuVector](https://github.com/ruvnet/RuVector). It is not a copy of the full RuVector ecosystem. It is a smaller system built to understand the important mechanisms directly:
+Local AI Vector Memory Engine is a learning-focused project for understanding the important mechanisms behind persistent AI memory directly. It deliberately starts as a smaller, coherent system that can grow without becoming impossible to reason about:
 
 ```text
 documents → chunks → local embeddings → SQLite memory records
@@ -231,7 +231,7 @@ assets/
 - **Rust for the substrate:** validated records, transactions, vector math, and indexes live behind a stable native boundary.
 - **SQLite is the source of truth:** HNSW is a derived, rebuildable acceleration structure.
 - **Inspectability over magic:** IDs, scores, metadata, provenance, filters, and lifecycle state are visible.
-- **Verified claims only:** planned RuVector-inspired features are clearly separated from implemented behavior.
+- **Verified claims only:** planned features are clearly separated from implemented behavior.
 
 ## Roadmap
 
