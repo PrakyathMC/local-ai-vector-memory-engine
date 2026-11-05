@@ -61,8 +61,12 @@ def read_database(path: Path) -> tuple[dict[str, str], list[dict[str, object]]]:
             """
             SELECT id, content, source, memory_type, namespace,
                    created_at_ms, updated_at_ms, status, metadata_json,
-                   embedding_model, embedding_dimensions, embedding_normalized
+                   embedding_model, embedding_dimensions, embedding_normalized,
+                   COALESCE(ml.importance, 0.5), COALESCE(ml.confidence, 0.5),
+                   ml.expires_at_ms, COALESCE(ml.admission_reason, 'legacy'),
+                   COALESCE(ml.useful_feedback, 0), COALESCE(ml.not_useful_feedback, 0)
             FROM memories
+            LEFT JOIN memory_lifecycle ml ON ml.memory_id = memories.id
             ORDER BY created_at_ms, id
             """
         ).fetchall()
@@ -88,6 +92,12 @@ def read_database(path: Path) -> tuple[dict[str, str], list[dict[str, object]]]:
                 "model": row[9],
                 "dimensions": row[10],
                 "normalized": bool(row[11]),
+                "importance": row[12],
+                "confidence": row[13],
+                "expires_at_ms": row[14],
+                "admission_reason": row[15],
+                "useful_feedback": row[16],
+                "not_useful_feedback": row[17],
             }
         )
     return metadata, memories
@@ -160,6 +170,10 @@ def memory_explorer(memories: list[dict[str, object]]) -> None:
                 "Type": memory["type"],
                 "Created (ms)": memory["created_at_ms"],
                 "Dimensions": memory["dimensions"],
+                "Importance": memory["importance"],
+                "Confidence": memory["confidence"],
+                "Useful": memory["useful_feedback"],
+                "Not useful": memory["not_useful_feedback"],
                 "Content preview": str(memory["content"])[:120],
             }
             for memory in memories
@@ -185,6 +199,14 @@ def memory_explorer(memories: list[dict[str, object]]) -> None:
                 "dimensions": selected["dimensions"],
                 "normalized": selected["normalized"],
                 "metadata": selected["metadata"],
+                "importance": selected["importance"],
+                "confidence": selected["confidence"],
+                "expires_at_ms": selected["expires_at_ms"],
+                "admission_reason": selected["admission_reason"],
+                "feedback": {
+                    "useful": selected["useful_feedback"],
+                    "not_useful": selected["not_useful_feedback"],
+                },
             }
         )
 
@@ -518,32 +540,83 @@ def embedding_view(path: Path) -> None:
 def lifecycle_view(path: Path) -> None:
     st.header("Memory lifecycle")
     store = load_store(path)
-    memories = store.list(None)
+    _, memories = read_database(path)
     if not memories:
         st.info("No memories found.")
         return
 
-    selected_id = st.selectbox("Memory", [memory.id for memory in memories])
-    selected = next(memory for memory in memories if memory.id == selected_id)
-    st.write(selected.content)
-    status_badge(selected.status)
+    selected_id = st.selectbox("Memory", [memory["id"] for memory in memories])
+    selected = next(memory for memory in memories if memory["id"] == selected_id)
+    st.write(selected["content"])
+    status_badge(str(selected["status"]))
+
+    st.subheader("Admission policy and expiry")
+    policy_columns = st.columns(3)
+    with policy_columns[0]:
+        importance = st.slider(
+            "Importance", 0.0, 1.0, float(selected_importance(selected)), 0.05,
+            help="How valuable this memory is expected to be over time.",
+        )
+    with policy_columns[1]:
+        confidence = st.slider(
+            "Confidence", 0.0, 1.0, float(selected["confidence"]), 0.05,
+            help="How confident the system is that the memory is correct.",
+        )
+    with policy_columns[2]:
+        expires_at = st.number_input(
+            "Expires at (ms; 0 = never)", min_value=0,
+            value=int(selected["expires_at_ms"] or 0), step=1000,
+        )
+    reason = st.text_input("Admission reason", value=str(selected["admission_reason"]))
+    if st.button("Save lifecycle policy"):
+        load_store(path).set_lifecycle(
+            selected_id,
+            importance=importance,
+            confidence=confidence,
+            expires_at_ms=None if expires_at == 0 else int(expires_at),
+            admission_reason=reason,
+        )
+        st.success("Lifecycle policy saved.")
+        st.rerun()
+
+    st.subheader("Retrieval feedback")
+    st.caption(
+        f"Useful: {selected['useful_feedback']} · "
+        f"Not useful: {selected['not_useful_feedback']}"
+    )
+    feedback_left, feedback_right = st.columns(2)
+    with feedback_left:
+        if st.button("Mark useful"):
+            load_store(path).record_feedback(selected_id, True)
+            st.success("Useful feedback recorded.")
+            st.rerun()
+    with feedback_right:
+        if st.button("Mark not useful"):
+            load_store(path).record_feedback(selected_id, False)
+            st.warning("Not-useful feedback recorded.")
+            st.rerun()
 
     first, second, third = st.columns(3)
     with first:
         if st.button("Restore / activate"):
-            store.restore(selected.id)
+            store.restore(selected_id)
             st.success("Memory restored.")
             st.rerun()
     with second:
         if st.button("Archive"):
-            store.archive(selected.id)
+            store.archive(selected_id)
             st.warning("Memory archived.")
             st.rerun()
     with third:
         if st.button("Soft delete"):
-            store.delete(selected.id)
+            store.delete(selected_id)
             st.error("Memory soft-deleted.")
             st.rerun()
+
+
+def selected_importance(memory: dict[str, object]) -> float:
+    """Keep the lifecycle slider resilient to legacy SQLite values."""
+    return float(memory["importance"] or 0.5)
 
 
 def main() -> None:

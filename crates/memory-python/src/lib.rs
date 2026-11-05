@@ -5,6 +5,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, HashMap};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use memory_core::{EmbeddingProvenance, MemoryId, MemoryRecord, MemoryStatus, MemoryType};
 use memory_retrieval::{HnswIndex, SearchOptions, search_with_options};
@@ -287,7 +288,7 @@ impl Store {
         if !indices.contains_key(&cache_key) {
             let records = self
                 .inner
-                .list(namespace.as_deref())
+                .list_retrievable(namespace.as_deref(), now_ms())
                 .map_err(|error| PyValueError::new_err(error.to_string()))?;
             let index = HnswIndex::build(&records)
                 .map_err(|error| PyValueError::new_err(error.to_string()))?;
@@ -336,6 +337,72 @@ impl Store {
         self.hnsw_indices.borrow_mut().clear();
         Ok(())
     }
+
+    #[pyo3(signature = (id, importance=0.5, confidence=0.5, expires_at_ms=None, admission_reason="manual".to_string()))]
+    fn set_lifecycle(
+        &self,
+        id: String,
+        importance: f32,
+        confidence: f32,
+        expires_at_ms: Option<u64>,
+        admission_reason: String,
+    ) -> PyResult<()> {
+        let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.inner
+            .set_lifecycle(
+                &id,
+                importance,
+                confidence,
+                expires_at_ms,
+                &admission_reason,
+            )
+            .map_err(|error| PyValueError::new_err(error.to_string()))
+    }
+
+    fn lifecycle(&self, id: String) -> PyResult<Option<HashMap<String, String>>> {
+        let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
+        let Some(value) = self
+            .inner
+            .get_lifecycle(&id)
+            .map_err(|error| PyValueError::new_err(error.to_string()))?
+        else {
+            return Ok(None);
+        };
+        let mut result = HashMap::from([
+            ("importance".into(), value.importance.to_string()),
+            ("confidence".into(), value.confidence.to_string()),
+            ("admission_reason".into(), value.admission_reason),
+            ("useful_feedback".into(), value.useful_feedback.to_string()),
+            (
+                "not_useful_feedback".into(),
+                value.not_useful_feedback.to_string(),
+            ),
+        ]);
+        if let Some(expires_at_ms) = value.expires_at_ms {
+            result.insert("expires_at_ms".into(), expires_at_ms.to_string());
+        }
+        if let Some(last_feedback_at_ms) = value.last_feedback_at_ms {
+            result.insert(
+                "last_feedback_at_ms".into(),
+                last_feedback_at_ms.to_string(),
+            );
+        }
+        Ok(Some(result))
+    }
+
+    fn record_feedback(&self, id: String, useful: bool) -> PyResult<()> {
+        let id = MemoryId::new(id).map_err(|error| PyValueError::new_err(error.to_string()))?;
+        self.inner
+            .record_feedback(&id, useful, now_ms())
+            .map_err(|error| PyValueError::new_err(error.to_string()))
+    }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 #[pyclass]

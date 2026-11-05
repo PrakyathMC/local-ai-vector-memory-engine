@@ -1,7 +1,6 @@
 //! SQLite persistence for validated memory records.
 //!
-//! The database is deliberately boring at this stage: one memory record maps
-//! to one SQLite row. Vector indexing and retrieval will be added later.
+//! Durable SQLite records and lifecycle metadata for the memory engine.
 
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -34,19 +33,45 @@ CREATE TABLE IF NOT EXISTS memories (
     embedding_normalized INTEGER NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS memory_lifecycle (
+    memory_id TEXT PRIMARY KEY NOT NULL REFERENCES memories(id) ON DELETE CASCADE,
+    importance REAL NOT NULL DEFAULT 0.5,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    expires_at_ms INTEGER,
+    admission_reason TEXT NOT NULL DEFAULT 'manual',
+    useful_feedback INTEGER NOT NULL DEFAULT 0,
+    not_useful_feedback INTEGER NOT NULL DEFAULT 0,
+    last_feedback_at_ms INTEGER
+);
+
 INSERT OR IGNORE INTO engine_metadata (key, value)
-VALUES ('schema_version', '1');
+VALUES ('schema_version', '2');
+
+UPDATE engine_metadata SET value = '2'
+WHERE key = 'schema_version' AND value = '1';
 
 INSERT OR IGNORE INTO engine_metadata (key, value)
 VALUES ('distance_metric', 'cosine');
 "#;
 
-pub const SCHEMA_VERSION: i64 = 1;
+pub const SCHEMA_VERSION: i64 = 2;
 pub const DISTANCE_METRIC: &str = "cosine";
 
 /// A local persistent memory store.
 pub struct MemoryStore {
     connection: Connection,
+}
+
+/// Durable policy and feedback information associated with a memory.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MemoryLifecycle {
+    pub importance: f32,
+    pub confidence: f32,
+    pub expires_at_ms: Option<u64>,
+    pub admission_reason: String,
+    pub useful_feedback: u64,
+    pub not_useful_feedback: u64,
+    pub last_feedback_at_ms: Option<u64>,
 }
 
 impl MemoryStore {
@@ -61,6 +86,10 @@ impl MemoryStore {
 
     fn from_connection(connection: Connection) -> Result<Self, StoreError> {
         connection.execute_batch(SCHEMA)?;
+        connection.execute(
+            "INSERT OR IGNORE INTO memory_lifecycle (memory_id) SELECT id FROM memories",
+            [],
+        )?;
         initialize_embedding_configuration_from_existing_records(&connection)?;
         Ok(Self { connection })
     }
@@ -235,6 +264,11 @@ impl MemoryStore {
             ],
         )?;
 
+        self.connection.execute(
+            "INSERT INTO memory_lifecycle (memory_id) VALUES (?1)",
+            params![record.id.as_str()],
+        )?;
+
         Ok(())
     }
 
@@ -271,6 +305,95 @@ impl MemoryStore {
             records.push(row?);
         }
         Ok(records)
+    }
+
+    /// List active, non-expired memories eligible for normal retrieval.
+    pub fn list_retrievable(
+        &self,
+        namespace: Option<&str>,
+        now_ms: u64,
+    ) -> Result<Vec<MemoryRecord>, StoreError> {
+        let records = self.list(namespace)?;
+        let mut retrievable = Vec::new();
+        for record in records {
+            if record.status != MemoryStatus::Active {
+                continue;
+            }
+            let lifecycle = self.get_lifecycle(&record.id)?;
+            let not_expired = lifecycle
+                .and_then(|value| value.expires_at_ms)
+                .map(|expires_at| expires_at > now_ms)
+                .unwrap_or(true);
+            if not_expired {
+                retrievable.push(record);
+            }
+        }
+        Ok(retrievable)
+    }
+
+    pub fn get_lifecycle(&self, id: &MemoryId) -> Result<Option<MemoryLifecycle>, StoreError> {
+        self.connection
+            .query_row(
+                "SELECT importance, confidence, expires_at_ms, admission_reason, useful_feedback, not_useful_feedback, last_feedback_at_ms FROM memory_lifecycle WHERE memory_id = ?1",
+                params![id.as_str()],
+                |row| {
+                    Ok(MemoryLifecycle {
+                        importance: row.get(0)?,
+                        confidence: row.get(1)?,
+                        expires_at_ms: row.get(2)?,
+                        admission_reason: row.get(3)?,
+                        useful_feedback: row.get(4)?,
+                        not_useful_feedback: row.get(5)?,
+                        last_feedback_at_ms: row.get(6)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(StoreError::from)
+    }
+
+    pub fn set_lifecycle(
+        &self,
+        id: &MemoryId,
+        importance: f32,
+        confidence: f32,
+        expires_at_ms: Option<u64>,
+        admission_reason: &str,
+    ) -> Result<(), StoreError> {
+        validate_unit_value("importance", importance)?;
+        validate_unit_value("confidence", confidence)?;
+        let changed = self.connection.execute(
+            "UPDATE memory_lifecycle SET importance = ?1, confidence = ?2, expires_at_ms = ?3, admission_reason = ?4 WHERE memory_id = ?5",
+            params![importance, confidence, expires_at_ms, admission_reason, id.as_str()],
+        )?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.as_str().to_string()));
+        }
+        Ok(())
+    }
+
+    /// Record explicit feedback without modifying the memory text or vector.
+    pub fn record_feedback(
+        &self,
+        id: &MemoryId,
+        useful: bool,
+        now_ms: u64,
+    ) -> Result<(), StoreError> {
+        let column = if useful {
+            "useful_feedback"
+        } else {
+            "not_useful_feedback"
+        };
+        let sql = format!(
+            "UPDATE memory_lifecycle SET {column} = {column} + 1, last_feedback_at_ms = ?1 WHERE memory_id = ?2"
+        );
+        let changed = self
+            .connection
+            .execute(&sql, params![now_ms, id.as_str()])?;
+        if changed == 0 {
+            return Err(StoreError::NotFound(id.as_str().to_string()));
+        }
+        Ok(())
     }
 
     pub fn update(&self, record: &MemoryRecord) -> Result<(), StoreError> {
@@ -492,6 +615,18 @@ pub enum StoreError {
     EmbeddingDimensionsMismatch { expected: usize, actual: usize },
     #[error("database contains multiple embedding models or dimensions")]
     MixedEmbeddingConfiguration,
+    #[error("{field} must be between 0.0 and 1.0")]
+    InvalidLifecycleValue { field: String },
+}
+
+fn validate_unit_value(field: &str, value: f32) -> Result<(), StoreError> {
+    if value.is_finite() && (0.0..=1.0).contains(&value) {
+        Ok(())
+    } else {
+        Err(StoreError::InvalidLifecycleValue {
+            field: field.into(),
+        })
+    }
 }
 
 #[cfg(test)]
@@ -658,5 +793,56 @@ mod tests {
         invalid.embedding.pop();
         assert!(store.insert_many(&[record(), invalid]).is_err());
         assert_eq!(store.list(None).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn lifecycle_metadata_and_feedback_persist() {
+        let store = MemoryStore::in_memory().unwrap();
+        let original = record();
+        store.insert(&original).unwrap();
+
+        store
+            .set_lifecycle(&original.id, 0.9, 0.8, Some(2_000), "explicit user preference")
+            .unwrap();
+        store.record_feedback(&original.id, true, 1_000).unwrap();
+        store.record_feedback(&original.id, false, 1_100).unwrap();
+
+        assert_eq!(
+            store.get_lifecycle(&original.id).unwrap(),
+            Some(MemoryLifecycle {
+                importance: 0.9,
+                confidence: 0.8,
+                expires_at_ms: Some(2_000),
+                admission_reason: "explicit user preference".into(),
+                useful_feedback: 1,
+                not_useful_feedback: 1,
+                last_feedback_at_ms: Some(1_100),
+            })
+        );
+    }
+
+    #[test]
+    fn expired_memories_are_not_retrievable() {
+        let store = MemoryStore::in_memory().unwrap();
+        let original = record();
+        store.insert(&original).unwrap();
+        store
+            .set_lifecycle(&original.id, 0.5, 0.5, Some(100), "temporary context")
+            .unwrap();
+
+        assert!(store.list_retrievable(None, 100).unwrap().is_empty());
+        assert_eq!(store.list_retrievable(None, 99).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn lifecycle_scores_must_be_between_zero_and_one() {
+        let store = MemoryStore::in_memory().unwrap();
+        let original = record();
+        store.insert(&original).unwrap();
+
+        assert!(matches!(
+            store.set_lifecycle(&original.id, 1.1, 0.5, None, "invalid"),
+            Err(StoreError::InvalidLifecycleValue { field }) if field == "importance"
+        ));
     }
 }
