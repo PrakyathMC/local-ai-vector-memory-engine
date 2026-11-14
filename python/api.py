@@ -179,9 +179,9 @@ def admit_memory(payload: MemoryInput, db: str = Query("data/ingestion-demo.db")
 
 @app.post("/search")
 def search(payload: SearchRequest, db: str = Query("data/ingestion-demo.db")) -> dict[str, Any]:
-    store = store_for(db)
     if payload.mode not in {"exact", "hnsw"}:
         raise HTTPException(status_code=400, detail="mode must be exact or hnsw")
+    store = store_for(db)
     if payload.mode == "hnsw":
         results = store.search_hnsw(
             payload.query_embedding,

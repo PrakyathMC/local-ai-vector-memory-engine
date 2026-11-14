@@ -57,8 +57,12 @@ The project intentionally separates AI experimentation in Python from performanc
 | Provenance | Source, model, dimensions, metadata, and timestamps stored with each memory |
 | Inspection | Streamlit dashboard, memory explorer, embedding projection, and HNSW Observatory |
 | Evaluation | Labeled retrieval fixture plus exact-vs-HNSW comparison and synthetic benchmark |
+| RAG context | Bounded, cited evidence packages with exact/HNSW support |
+| Answer generation | Deterministic mock provider plus optional Ollama adapter |
+| Application API | FastAPI HTTP API with OpenAPI docs and live query traces |
+| CLI | Python workflow CLI plus Rust database diagnostics CLI |
 
-Advanced graph relationships, feedback learning, multi-agent shared memory, and generation adapters are intentionally future work. They are not presented as implemented features.
+Graph relationships, ranking adaptation from feedback, and multi-agent shared memory remain future work. The current generation layer includes a deterministic demo provider and an optional Ollama adapter; it is not a production model-hosting service.
 
 ## See it visually
 
@@ -70,7 +74,7 @@ Advanced graph relationships, feedback learning, multi-agent shared memory, and 
 
 Open the [Local AI Memory Explorer](https://prakyathmc.github.io/local-ai-vector-memory-engine/explorer/) to explore the memory flow, exact search path, HNSW path, index layers, and ranked results in the browser.
 
-The Explorer is a lightweight static visualization of the current architecture. The live local database inspector is the Streamlit application described below.
+The Explorer includes a static fallback and can connect to the local FastAPI `/trace` endpoint to visualize real query traces. The live local database inspector is the Streamlit application described below.
 
 ### Local Streamlit inspector
 
@@ -82,6 +86,22 @@ cd /d D:\REA
 ```
 
 Then open `http://localhost:8501` and select **HNSW observatory**.
+
+### Local API and Explorer trace
+
+Start the API:
+
+```cmd
+.venv\Scripts\python.exe -m uvicorn python.api:app --host 127.0.0.1 --port 8000
+```
+
+Open the generated API documentation at `http://127.0.0.1:8000/docs`. To run the Explorer locally:
+
+```cmd
+.venv\Scripts\python.exe -m http.server 5500 --directory explorer
+```
+
+Then open `http://127.0.0.1:5500`, enter a question, and click **Run query path**.
 
 ## Architecture
 
@@ -149,9 +169,9 @@ The walkthrough explains the current system in plain language: chunking, embeddi
 <details>
 <summary><strong>What is implemented versus planned</strong></summary>
 
-**Implemented:** SQLite persistence, local BGE embeddings, chunk ingestion, exact cosine retrieval, HNSW retrieval, filters, lifecycle controls, evaluation, benchmarks, and Streamlit inspection.
+**Implemented:** SQLite persistence, local BGE embeddings, chunk ingestion, exact cosine retrieval, HNSW retrieval, filters, lifecycle controls, RAG context packages, answer adapters, FastAPI endpoints, CLI workflows, evaluation, benchmarks, and live Explorer traces.
 
-**Planned:** feedback learning, graph relationships, richer query traces, and a RAG context API.
+**Planned:** feedback-driven ranking experiments, graph relationships, and multi-agent shared memory.
 
 </details>
 
@@ -242,11 +262,12 @@ assets/
 - [x] Exact-vs-HNSW evaluation and benchmark tooling
 - [x] Streamlit HNSW Observatory
 - [x] Interactive architecture/index Explorer
-- [ ] Feedback recording and ranking experiments
-- [ ] RAG context package API
-- [ ] Query traces backed by real engine events
+- [x] Feedback recording and lifecycle controls
+- [x] RAG context package API
+- [x] Query traces backed by real engine events
+- [x] FastAPI and CLI application surfaces
 - [ ] Optional graph relationships and graph-aware retrieval
-- [ ] Version 1 hardening and release checklist
+- [x] Version 1 hardening and release checklist
 
 ## Learning goal
 
