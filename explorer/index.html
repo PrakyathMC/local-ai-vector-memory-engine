@@ -47,7 +47,8 @@
     @keyframes pulse { 50% { box-shadow: 0 0 90px rgba(167,139,250,.75); transform: scale(1.05); } }
     .panel { background: var(--panel); border: 1px solid rgba(157,167,207,.18); border-radius: 24px; box-shadow: var(--shadow); backdrop-filter: blur(18px); padding: 22px; }
     .toolbar { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin-bottom: 18px; }
-    button, select { color: var(--text); background: #1b2345; border: 1px solid #3a4780; border-radius: 10px; padding: 10px 13px; font: inherit; cursor: pointer; }
+    button, select, input { color: var(--text); background: #1b2345; border: 1px solid #3a4780; border-radius: 10px; padding: 10px 13px; font: inherit; cursor: pointer; }
+    input { min-width: 220px; }
     button:hover, select:hover { border-color: var(--cyan); transform: translateY(-1px); }
     button.primary { background: linear-gradient(135deg, #176b88, #6541a2); border-color: transparent; font-weight: 750; }
     .status { margin-left: auto; color: var(--green); font-size: 13px; }
@@ -101,6 +102,8 @@
       <div class="toolbar">
         <select id="mode" aria-label="Retrieval mode"><option value="hnsw">HNSW · ANN</option><option value="exact">Exact baseline</option></select>
         <select id="namespace" aria-label="Namespace"><option value="all">All namespaces</option><option value="project">project-memory</option><option value="research">research-notes</option></select>
+        <input id="query" aria-label="Query" value="How does this project retrieve relevant memories?">
+        <input id="apiBase" aria-label="Local API URL" value="http://127.0.0.1:8000" placeholder="API URL (optional)">
         <button class="primary" id="run">Run query path</button>
         <button id="reset">Reset view</button>
         <span class="status" id="status">● index ready · cached snapshot</span>
@@ -139,7 +142,7 @@
     <p class="footer">Static interactive architecture demo · Rust retrieval core · Python AI workflow · SQLite source of truth</p>
   </main>
   <script>
-    const memories = [
+    const fallbackMemories = [
       { id: "mem-001", ns: "project", label: "storage", x: 120, y: 145, score: .91, content: "SQLite stores validated memory records and embedding provenance.", source: "memory-store" },
       { id: "mem-002", ns: "project", label: "retrieval", x: 285, y: 95, score: .88, content: "Exact cosine search remains the correctness baseline.", source: "memory-retrieval" },
       { id: "mem-003", ns: "research", label: "hnsw", x: 470, y: 140, score: .86, content: "HNSW trades index-build cost for faster warm queries.", source: "memory-retrieval" },
@@ -147,7 +150,9 @@
       { id: "mem-005", ns: "research", label: "chunking", x: 400, y: 315, score: .74, content: "Chunking creates stable source-linked memories for ingestion.", source: "ingest_documents.py" },
       { id: "mem-006", ns: "project", label: "lifecycle", x: 185, y: 305, score: .68, content: "Archive and delete operations preserve explicit memory state.", source: "memory-store" }
     ];
-    const edges = [[0,1],[1,2],[2,3],[1,4],[4,5],[5,0],[0,4],[2,4],[3,5]];
+    const fallbackEdges = [[0,1],[1,2],[2,3],[1,4],[4,5],[5,0],[0,4],[2,4],[3,5]];
+    let memories = fallbackMemories;
+    let edges = fallbackEdges;
     let selected = null;
     let filtered = memories;
     let returned = new Set(["mem-001","mem-002","mem-003","mem-004"]);
@@ -182,8 +187,48 @@
       const selectedMemory = memories.find(m => m.id === selected);
       $("explanation").textContent = selectedMemory ? `${selectedMemory.id} is selected. Source: ${selectedMemory.source}. The full vector remains higher-dimensional; this graph is only an explanatory projection.` : $("mode").value === "hnsw" ? "HNSW navigates a graph of vectors, then returns the nearest candidates." : "Exact search compares the query against every eligible active memory.";
     }
-    function run() {
+    function renderTrace(trace) {
+      const items = trace.context.evidence || [];
+      memories = items.map((item, index) => ({
+        id: item.memory_id,
+        ns: item.namespace || "default",
+        label: `rank-${item.rank}`,
+        x: 125 + (index % 3) * 220,
+        y: 115 + Math.floor(index / 3) * 145,
+        score: Number(item.score || 0),
+        content: item.text,
+        source: item.source || "unknown source"
+      }));
+      edges = memories.slice(1).map((_, index) => [index, index + 1]);
+      filtered = memories;
+      returned = new Set(memories.map(memory => memory.id));
+      $("statMode").textContent = trace.context.retrieval.mode.toUpperCase();
+      $("statCandidates").textContent = trace.context.retrieval.returned_count;
+      $("statLatency").textContent = `${trace.latency_ms} ms`;
+      $("statAgreement").textContent = "live trace";
+      $("flowIndex").textContent = trace.context.retrieval.mode === "hnsw" ? "HNSW graph" : "scan all vectors";
+      $("status").textContent = `â— live API trace Â· ${trace.latency_ms} ms`;
+      selected = null; draw(); renderResults();
+    }
+    async function run() {
       const mode = $("mode").value; const ns = $("namespace").value;
+      const apiBase = $("apiBase").value.trim().replace(/\/$/, "");
+      if (apiBase) {
+        $("status").textContent = "â— requesting live traceâ€¦";
+        try {
+          const response = await fetch(`${apiBase}/trace?db=data/ingestion-demo.db`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ query: $("query").value, mode, top_k: 5, max_chars: 6000, namespace: ns === "all" ? null : ns })
+          });
+          if (!response.ok) throw new Error(`API returned ${response.status}`);
+          renderTrace(await response.json());
+          return;
+        } catch (error) {
+          $("status").textContent = "â— API unavailable Â· showing local demo";
+          memories = fallbackMemories; edges = fallbackEdges;
+        }
+      }
       filtered = memories.filter(m => ns === "all" || m.ns === ns);
       returned = new Set(filtered.slice(0, mode === "hnsw" ? 4 : 4).map(m => m.id));
       $("statMode").textContent = mode === "hnsw" ? "HNSW" : "EXACT";

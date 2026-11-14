@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 PROJECT_ROOT = Path(__file__).parents[1]
@@ -31,6 +32,13 @@ from local_ai_memory import Memory, MemoryStore  # noqa: E402
 
 
 app = FastAPI(title="Local AI Memory Engine API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=False,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 class MemoryInput(BaseModel):
@@ -216,6 +224,39 @@ def build_api_context(payload: ContextRequest, db: str) -> Any:
 @app.post("/context")
 def context(payload: ContextRequest, db: str = Query("data/ingestion-demo.db")) -> dict[str, Any]:
     return build_api_context(payload, db).to_dict()
+
+
+@app.post("/trace")
+def trace(payload: ContextRequest, db: str = Query("data/ingestion-demo.db")) -> dict[str, Any]:
+    """Return a browser-friendly trace of the retrieval path."""
+    started = time.perf_counter()
+    package = build_api_context(payload, db)
+    elapsed_ms = round((time.perf_counter() - started) * 1000, 3)
+    evidence_ids = [item["memory_id"] for item in package.evidence]
+    return {
+        "trace_version": "1",
+        "query": payload.query,
+        "stages": [
+            {"name": "query", "status": "complete", "details": {"text": payload.query}},
+            {
+                "name": "embedding",
+                "status": "complete",
+                "details": {"model": MODEL_NAME, "dimensions": MODEL_DIMENSIONS},
+            },
+            {
+                "name": "retrieval",
+                "status": "complete",
+                "details": package.retrieval,
+            },
+            {
+                "name": "evidence",
+                "status": "complete",
+                "details": {"selected_ids": evidence_ids},
+            },
+        ],
+        "latency_ms": elapsed_ms,
+        "context": package.to_dict(),
+    }
 
 
 @app.post("/answer")
