@@ -520,6 +520,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "memory-cli"
+version = "0.1.0"
+dependencies = [
+ "memory-core",
+ "memory-store",
+ "serde_json",
+]
+
+[[package]]
 name = "memory-core"
 version = "0.1.0"
 dependencies = [

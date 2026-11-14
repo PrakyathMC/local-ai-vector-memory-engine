@@ -6,3 +6,5 @@ sentence-transformers>=3,<6
 pydantic>=2,<3
 streamlit>=1.40,<2
 pandas>=2,<3
+fastapi>=0.115,<1
+uvicorn>=0.30,<1

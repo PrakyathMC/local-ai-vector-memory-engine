@@ -5,4 +5,5 @@ members = [
     "crates/memory-store",
     "crates/memory-retrieval",
     "crates/memory-python",
+    "crates/memory-cli",
 ]
