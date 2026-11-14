@@ -22,6 +22,12 @@ from ingest_documents import (  # noqa: E402
     ingest_text,
 )
 from context_builder import build_context  # noqa: E402
+from answer_generation import (  # noqa: E402
+    AnswerGenerationError,
+    MockAnswerGenerator,
+    OllamaAnswerGenerator,
+    generate_grounded_answer,
+)
 from local_ai_memory import MemoryStore  # noqa: E402
 
 
@@ -575,7 +581,21 @@ def rag_context_view(path: Path) -> None:
     with controls[3]:
         namespace_filter = st.selectbox("Namespace", ["Any"] + namespaces, key="rag_namespace")
 
-    if st.button("Build RAG context", type="primary") and query.strip():
+    generator_type = st.selectbox(
+        "Answer generator",
+        ["Mock demo", "Ollama (optional)"],
+        help="Mock demo works without an LLM. Ollama requires a local Ollama server and model.",
+    )
+    ollama_model = "llama3.2:3b"
+    ollama_url = "http://localhost:11434"
+    if generator_type == "Ollama (optional)":
+        generator_columns = st.columns(2)
+        with generator_columns[0]:
+            ollama_model = st.text_input("Ollama model", value=ollama_model)
+        with generator_columns[1]:
+            ollama_url = st.text_input("Ollama URL", value=ollama_url)
+
+    if st.button("Build context and generate answer", type="primary") and query.strip():
         try:
             with st.spinner("Embedding query and packaging retrieved evidence..."):
                 provider = get_provider()
@@ -589,7 +609,17 @@ def rag_context_view(path: Path) -> None:
                     namespace=None if namespace_filter == "Any" else namespace_filter,
                     model=provider.model_name,
                 )
+            generator = (
+                MockAnswerGenerator()
+                if generator_type == "Mock demo"
+                else OllamaAnswerGenerator(model_name=ollama_model, base_url=ollama_url)
+            )
+            with st.spinner(f"Generating answer with {generator.provider_name}..."):
+                answer = generate_grounded_answer(package, generator)
         except ValueError as error:
+            st.error(str(error))
+            return
+        except AnswerGenerationError as error:
             st.error(str(error))
             return
 
@@ -598,7 +628,9 @@ def rag_context_view(path: Path) -> None:
         metrics[1].metric("Returned candidates", package.retrieval["returned_count"])
         metrics[2].metric("Characters used", package.retrieval["used_chars"])
         metrics[3].metric("Truncated items", package.retrieval["truncated_count"])
-        st.subheader("Context sent to a future LLM")
+        st.subheader("Generated answer")
+        st.write(answer)
+        st.subheader("Retrieved context used for the answer")
         st.code(package.context_text or "No evidence matched the query.")
         st.subheader("Structured context package")
         st.json(package.to_dict())
