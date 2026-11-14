@@ -7,6 +7,7 @@
 use hnsw_rs::prelude::{DistCosine, Hnsw};
 use memory_core::{MemoryRecord, MemoryStatus, MemoryType};
 use memory_store::{MemoryStore, StoreError};
+use std::time::{SystemTime, UNIX_EPOCH};
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -193,9 +194,13 @@ pub fn search_with_options(
         }
     }
 
-    let memories = store.list(options.namespace.as_deref())?;
-    let mut hits = Vec::new();
     let expected_status = options.status.unwrap_or(MemoryStatus::Active);
+    let memories = if expected_status == MemoryStatus::Active {
+        store.list_retrievable(options.namespace.as_deref(), now_ms())?
+    } else {
+        store.list(options.namespace.as_deref())?
+    };
+    let mut hits = Vec::new();
 
     for memory in memories {
         if memory.status != expected_status {
@@ -272,7 +277,7 @@ impl HnswIndex {
     }
 
     pub fn build_from_store(store: &MemoryStore) -> Result<Self, HnswError> {
-        Ok(Self::build(&store.list(None)?)?)
+        Ok(Self::build(&store.list_retrievable(None, now_ms())?)?)
     }
 
     pub fn len(&self) -> usize {
@@ -336,6 +341,13 @@ impl HnswIndex {
         hits.truncate(top_k);
         Ok(hits)
     }
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 impl VectorIndex for HnswIndex {

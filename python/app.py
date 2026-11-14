@@ -21,6 +21,13 @@ from ingest_documents import (  # noqa: E402
     chunk_text,
     ingest_text,
 )
+from context_builder import build_context  # noqa: E402
+from answer_generation import (  # noqa: E402
+    AnswerGenerationError,
+    MockAnswerGenerator,
+    OllamaAnswerGenerator,
+    generate_grounded_answer,
+)
 from local_ai_memory import MemoryStore  # noqa: E402
 
 
@@ -61,8 +68,12 @@ def read_database(path: Path) -> tuple[dict[str, str], list[dict[str, object]]]:
             """
             SELECT id, content, source, memory_type, namespace,
                    created_at_ms, updated_at_ms, status, metadata_json,
-                   embedding_model, embedding_dimensions, embedding_normalized
+                   embedding_model, embedding_dimensions, embedding_normalized,
+                   COALESCE(ml.importance, 0.5), COALESCE(ml.confidence, 0.5),
+                   ml.expires_at_ms, COALESCE(ml.admission_reason, 'legacy'),
+                   COALESCE(ml.useful_feedback, 0), COALESCE(ml.not_useful_feedback, 0)
             FROM memories
+            LEFT JOIN memory_lifecycle ml ON ml.memory_id = memories.id
             ORDER BY created_at_ms, id
             """
         ).fetchall()
@@ -88,6 +99,12 @@ def read_database(path: Path) -> tuple[dict[str, str], list[dict[str, object]]]:
                 "model": row[9],
                 "dimensions": row[10],
                 "normalized": bool(row[11]),
+                "importance": row[12],
+                "confidence": row[13],
+                "expires_at_ms": row[14],
+                "admission_reason": row[15],
+                "useful_feedback": row[16],
+                "not_useful_feedback": row[17],
             }
         )
     return metadata, memories
@@ -160,6 +177,10 @@ def memory_explorer(memories: list[dict[str, object]]) -> None:
                 "Type": memory["type"],
                 "Created (ms)": memory["created_at_ms"],
                 "Dimensions": memory["dimensions"],
+                "Importance": memory["importance"],
+                "Confidence": memory["confidence"],
+                "Useful": memory["useful_feedback"],
+                "Not useful": memory["not_useful_feedback"],
                 "Content preview": str(memory["content"])[:120],
             }
             for memory in memories
@@ -185,6 +206,14 @@ def memory_explorer(memories: list[dict[str, object]]) -> None:
                 "dimensions": selected["dimensions"],
                 "normalized": selected["normalized"],
                 "metadata": selected["metadata"],
+                "importance": selected["importance"],
+                "confidence": selected["confidence"],
+                "expires_at_ms": selected["expires_at_ms"],
+                "admission_reason": selected["admission_reason"],
+                "feedback": {
+                    "useful": selected["useful_feedback"],
+                    "not_useful": selected["not_useful_feedback"],
+                },
             }
         )
 
@@ -201,6 +230,16 @@ def ingestion_view(path: Path) -> None:
     )
     chunk_size = st.number_input("Chunk size (words)", min_value=10, value=200, step=10)
     overlap = st.number_input("Overlap (words)", min_value=0, value=40, step=5)
+    admission_columns = st.columns(3)
+    with admission_columns[0]:
+        importance = st.slider("Admission importance", 0.0, 1.0, 0.5, 0.05)
+    with admission_columns[1]:
+        confidence = st.slider("Admission confidence", 0.0, 1.0, 0.5, 0.05)
+    with admission_columns[2]:
+        admission_reason = st.text_input("Admission reason", value="document ingestion")
+    st.caption(
+        "A new chunk is accepted when importance is at least 0.30 or confidence is at least 0.50."
+    )
     text = uploaded.getvalue().decode("utf-8") if uploaded else st.text_area("Or paste text", height=180)
 
     if text:
@@ -216,19 +255,23 @@ def ingestion_view(path: Path) -> None:
                 st.write(content)
 
         if st.button("Embed and store chunks", type="primary"):
-            provider = get_provider()
-            store = load_store(path)
-            count = ingest_text(
-                text,
-                source,
-                store,
-                provider,
-                namespace=namespace,
-                chunk_size=int(chunk_size),
-                overlap=int(overlap),
-                memory_type=memory_type,
-            )
-            st.success(f"Stored {count} chunks in {path}.")
+            with st.spinner("Loading the embedding model and applying admission policy..."):
+                provider = get_provider()
+                store = load_store(path)
+                count = ingest_text(
+                    text,
+                    source,
+                    store,
+                    provider,
+                    namespace=namespace,
+                    chunk_size=int(chunk_size),
+                    overlap=int(overlap),
+                    memory_type=memory_type,
+                    importance=importance,
+                    confidence=confidence,
+                    admission_reason=admission_reason,
+                )
+            st.success(f"Accepted and stored {count} chunks in {path}.")
             st.rerun()
 
 
@@ -515,35 +558,164 @@ def embedding_view(path: Path) -> None:
         st.scatter_chart(projection, x="x", y="y")
 
 
+def rag_context_view(path: Path) -> None:
+    st.header("RAG context builder")
+    st.write(
+        "Retrieve evidence and package it for a future AI answer. This page does "
+        "not generate an answer; it lets you inspect exactly what an AI model would receive."
+    )
+    _, records = read_database(path)
+    namespaces = sorted({str(record["namespace"]) for record in records})
+    query = st.text_area(
+        "Question or task",
+        value="How does this project retrieve relevant memories?",
+        key="rag_context_query",
+    )
+    controls = st.columns(4)
+    with controls[0]:
+        mode = st.selectbox("Retrieval mode", ["exact", "hnsw"], key="rag_mode")
+    with controls[1]:
+        top_k = st.slider("Evidence items", 1, 20, 5, key="rag_top_k")
+    with controls[2]:
+        max_chars = st.number_input("Evidence character budget", 100, 50_000, 6_000, 100)
+    with controls[3]:
+        namespace_filter = st.selectbox("Namespace", ["Any"] + namespaces, key="rag_namespace")
+
+    generator_type = st.selectbox(
+        "Answer generator",
+        ["Mock demo", "Ollama (optional)"],
+        help="Mock demo works without an LLM. Ollama requires a local Ollama server and model.",
+    )
+    ollama_model = "llama3.2:3b"
+    ollama_url = "http://localhost:11434"
+    if generator_type == "Ollama (optional)":
+        generator_columns = st.columns(2)
+        with generator_columns[0]:
+            ollama_model = st.text_input("Ollama model", value=ollama_model)
+        with generator_columns[1]:
+            ollama_url = st.text_input("Ollama URL", value=ollama_url)
+
+    if st.button("Build context and generate answer", type="primary") and query.strip():
+        try:
+            with st.spinner("Embedding query and packaging retrieved evidence..."):
+                provider = get_provider()
+                package = build_context(
+                    load_store(path),
+                    query,
+                    provider.embed([query])[0],
+                    top_k=top_k,
+                    max_chars=max_chars,
+                    mode=mode,
+                    namespace=None if namespace_filter == "Any" else namespace_filter,
+                    model=provider.model_name,
+                )
+            generator = (
+                MockAnswerGenerator()
+                if generator_type == "Mock demo"
+                else OllamaAnswerGenerator(model_name=ollama_model, base_url=ollama_url)
+            )
+            with st.spinner(f"Generating answer with {generator.provider_name}..."):
+                answer = generate_grounded_answer(package, generator)
+        except ValueError as error:
+            st.error(str(error))
+            return
+        except AnswerGenerationError as error:
+            st.error(str(error))
+            return
+
+        metrics = st.columns(4)
+        metrics[0].metric("Selected evidence", package.retrieval["selected_count"])
+        metrics[1].metric("Returned candidates", package.retrieval["returned_count"])
+        metrics[2].metric("Characters used", package.retrieval["used_chars"])
+        metrics[3].metric("Truncated items", package.retrieval["truncated_count"])
+        st.subheader("Generated answer")
+        st.write(answer)
+        st.subheader("Retrieved context used for the answer")
+        st.code(package.context_text or "No evidence matched the query.")
+        st.subheader("Structured context package")
+        st.json(package.to_dict())
+
+
 def lifecycle_view(path: Path) -> None:
     st.header("Memory lifecycle")
     store = load_store(path)
-    memories = store.list(None)
+    _, memories = read_database(path)
     if not memories:
         st.info("No memories found.")
         return
 
-    selected_id = st.selectbox("Memory", [memory.id for memory in memories])
-    selected = next(memory for memory in memories if memory.id == selected_id)
-    st.write(selected.content)
-    status_badge(selected.status)
+    selected_id = st.selectbox("Memory", [memory["id"] for memory in memories])
+    selected = next(memory for memory in memories if memory["id"] == selected_id)
+    st.write(selected["content"])
+    status_badge(str(selected["status"]))
+
+    st.subheader("Admission policy and expiry")
+    policy_columns = st.columns(3)
+    with policy_columns[0]:
+        importance = st.slider(
+            "Importance", 0.0, 1.0, float(selected_importance(selected)), 0.05,
+            help="How valuable this memory is expected to be over time.",
+        )
+    with policy_columns[1]:
+        confidence = st.slider(
+            "Confidence", 0.0, 1.0, float(selected["confidence"]), 0.05,
+            help="How confident the system is that the memory is correct.",
+        )
+    with policy_columns[2]:
+        expires_at = st.number_input(
+            "Expires at (ms; 0 = never)", min_value=0,
+            value=int(selected["expires_at_ms"] or 0), step=1000,
+        )
+    reason = st.text_input("Admission reason", value=str(selected["admission_reason"]))
+    if st.button("Save lifecycle policy"):
+        load_store(path).set_lifecycle(
+            selected_id,
+            importance=importance,
+            confidence=confidence,
+            expires_at_ms=None if expires_at == 0 else int(expires_at),
+            admission_reason=reason,
+        )
+        st.success("Lifecycle policy saved.")
+        st.rerun()
+
+    st.subheader("Retrieval feedback")
+    st.caption(
+        f"Useful: {selected['useful_feedback']} · "
+        f"Not useful: {selected['not_useful_feedback']}"
+    )
+    feedback_left, feedback_right = st.columns(2)
+    with feedback_left:
+        if st.button("Mark useful"):
+            load_store(path).record_feedback(selected_id, True)
+            st.success("Useful feedback recorded.")
+            st.rerun()
+    with feedback_right:
+        if st.button("Mark not useful"):
+            load_store(path).record_feedback(selected_id, False)
+            st.warning("Not-useful feedback recorded.")
+            st.rerun()
 
     first, second, third = st.columns(3)
     with first:
         if st.button("Restore / activate"):
-            store.restore(selected.id)
+            store.restore(selected_id)
             st.success("Memory restored.")
             st.rerun()
     with second:
         if st.button("Archive"):
-            store.archive(selected.id)
+            store.archive(selected_id)
             st.warning("Memory archived.")
             st.rerun()
     with third:
         if st.button("Soft delete"):
-            store.delete(selected.id)
+            store.delete(selected_id)
             st.error("Memory soft-deleted.")
             st.rerun()
+
+
+def selected_importance(memory: dict[str, object]) -> float:
+    """Keep the lifecycle slider resilient to legacy SQLite values."""
+    return float(memory["importance"] or 0.5)
 
 
 def main() -> None:
@@ -563,6 +735,7 @@ def main() -> None:
             "Ingest & chunking",
             "Search playground",
             "HNSW observatory",
+            "RAG context builder",
             "Embedding inspector",
             "Memory lifecycle",
         ],
@@ -578,6 +751,8 @@ def main() -> None:
         search_view(path)
     elif view == "HNSW observatory":
         hnsw_observatory(path)
+    elif view == "RAG context builder":
+        rag_context_view(path)
     elif view == "Embedding inspector":
         embedding_view(path)
     else:

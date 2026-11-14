@@ -51,8 +51,12 @@ def ingest_text(
     chunk_size: int = 200,
     overlap: int = 40,
     memory_type: str = "note",
+    importance: float = 0.5,
+    confidence: float = 0.5,
+    admission_reason: str = "document ingestion",
+    expires_at_ms: int | None = None,
 ) -> int:
-    """Embed and upsert all chunks from one source. Returns chunk count."""
+    """Embed and upsert chunks, applying the memory admission policy."""
     chunks = chunk_text(text, chunk_size=chunk_size, overlap=overlap)
     source_key = _source_key(source)
     now_ms = int(time.time() * 1000)
@@ -65,6 +69,7 @@ def ingest_text(
     if len(vectors) != len(chunks):
         raise ValueError("embedding provider returned the wrong number of vectors")
 
+    admitted_count = 0
     for index, ((content, start, end), vector) in enumerate(zip(chunks, vectors)):
         memory_id = f"{source_key}-chunk-{index:04d}"
         expected_ids.add(memory_id)
@@ -86,9 +91,25 @@ def ingest_text(
             memory_type=memory_type,
         )
         if store.get(memory_id) is None:
-            store.insert(memory)
+            if not store.admit(
+                memory,
+                importance=importance,
+                confidence=confidence,
+                admission_reason=admission_reason,
+                expires_at_ms=expires_at_ms,
+            ):
+                continue
+            admitted_count += 1
         else:
             store.update(memory)
+            store.set_lifecycle(
+                memory_id,
+                importance=importance,
+                confidence=confidence,
+                admission_reason=admission_reason,
+                expires_at_ms=expires_at_ms,
+            )
+            admitted_count += 1
 
     # Remove stale chunks when a source becomes shorter after editing.
     for existing in store.list(namespace):
@@ -96,7 +117,7 @@ def ingest_text(
             if existing.id not in expected_ids:
                 store.delete(existing.id)
 
-    return len(chunks)
+    return admitted_count
 
 
 def ingest_file(
