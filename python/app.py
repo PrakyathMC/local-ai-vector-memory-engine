@@ -21,6 +21,7 @@ from ingest_documents import (  # noqa: E402
     chunk_text,
     ingest_text,
 )
+from context_builder import build_context  # noqa: E402
 from local_ai_memory import MemoryStore  # noqa: E402
 
 
@@ -248,22 +249,23 @@ def ingestion_view(path: Path) -> None:
                 st.write(content)
 
         if st.button("Embed and store chunks", type="primary"):
-            provider = get_provider()
-            store = load_store(path)
-            count = ingest_text(
-                text,
-                source,
-                store,
-                provider,
-                namespace=namespace,
-                chunk_size=int(chunk_size),
-                overlap=int(overlap),
-                memory_type=memory_type,
-                importance=importance,
-                confidence=confidence,
-                admission_reason=admission_reason,
-            )
-            st.success(f"Stored {count} chunks in {path}.")
+            with st.spinner("Loading the embedding model and applying admission policy..."):
+                provider = get_provider()
+                store = load_store(path)
+                count = ingest_text(
+                    text,
+                    source,
+                    store,
+                    provider,
+                    namespace=namespace,
+                    chunk_size=int(chunk_size),
+                    overlap=int(overlap),
+                    memory_type=memory_type,
+                    importance=importance,
+                    confidence=confidence,
+                    admission_reason=admission_reason,
+                )
+            st.success(f"Accepted and stored {count} chunks in {path}.")
             st.rerun()
 
 
@@ -550,6 +552,58 @@ def embedding_view(path: Path) -> None:
         st.scatter_chart(projection, x="x", y="y")
 
 
+def rag_context_view(path: Path) -> None:
+    st.header("RAG context builder")
+    st.write(
+        "Retrieve evidence and package it for a future AI answer. This page does "
+        "not generate an answer; it lets you inspect exactly what an AI model would receive."
+    )
+    _, records = read_database(path)
+    namespaces = sorted({str(record["namespace"]) for record in records})
+    query = st.text_area(
+        "Question or task",
+        value="How does this project retrieve relevant memories?",
+        key="rag_context_query",
+    )
+    controls = st.columns(4)
+    with controls[0]:
+        mode = st.selectbox("Retrieval mode", ["exact", "hnsw"], key="rag_mode")
+    with controls[1]:
+        top_k = st.slider("Evidence items", 1, 20, 5, key="rag_top_k")
+    with controls[2]:
+        max_chars = st.number_input("Evidence character budget", 100, 50_000, 6_000, 100)
+    with controls[3]:
+        namespace_filter = st.selectbox("Namespace", ["Any"] + namespaces, key="rag_namespace")
+
+    if st.button("Build RAG context", type="primary") and query.strip():
+        try:
+            with st.spinner("Embedding query and packaging retrieved evidence..."):
+                provider = get_provider()
+                package = build_context(
+                    load_store(path),
+                    query,
+                    provider.embed([query])[0],
+                    top_k=top_k,
+                    max_chars=max_chars,
+                    mode=mode,
+                    namespace=None if namespace_filter == "Any" else namespace_filter,
+                    model=provider.model_name,
+                )
+        except ValueError as error:
+            st.error(str(error))
+            return
+
+        metrics = st.columns(4)
+        metrics[0].metric("Selected evidence", package.retrieval["selected_count"])
+        metrics[1].metric("Returned candidates", package.retrieval["returned_count"])
+        metrics[2].metric("Characters used", package.retrieval["used_chars"])
+        metrics[3].metric("Truncated items", package.retrieval["truncated_count"])
+        st.subheader("Context sent to a future LLM")
+        st.code(package.context_text or "No evidence matched the query.")
+        st.subheader("Structured context package")
+        st.json(package.to_dict())
+
+
 def lifecycle_view(path: Path) -> None:
     st.header("Memory lifecycle")
     store = load_store(path)
@@ -649,6 +703,7 @@ def main() -> None:
             "Ingest & chunking",
             "Search playground",
             "HNSW observatory",
+            "RAG context builder",
             "Embedding inspector",
             "Memory lifecycle",
         ],
@@ -664,6 +719,8 @@ def main() -> None:
         search_view(path)
     elif view == "HNSW observatory":
         hnsw_observatory(path)
+    elif view == "RAG context builder":
+        rag_context_view(path)
     elif view == "Embedding inspector":
         embedding_view(path)
     else:
